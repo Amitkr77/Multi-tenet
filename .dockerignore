@@ -1,0 +1,28 @@
+# Keep the build context lean — only source + manifests are needed.
+# Docker will not send these paths to the daemon.
+
+# heavy dirs
+**/node_modules
+**/.pnpm-store
+
+# build outputs (rebuilt inside Docker)
+**/dist
+**/.next
+**/out
+**/.turbo
+**/coverage
+
+# runtime secrets / local env overrides
+**/.env
+**/.env.*
+!**/.env.example
+
+# docker volumes if bind-mounted locally
+docker/volumes/
+
+# dev tooling
+**/*.log
+**/.DS_Store
+**/Thumbs.db
+**/.idea
+**/.vscode

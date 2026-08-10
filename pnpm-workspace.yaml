@@ -1,0 +1,16 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+# These packages compile/download native binaries at install time; all are
+# legitimate, well-known dependencies we deliberately chose (Prisma engines,
+# Argon2 password hashing, Sharp for Next.js image optimization, Nest's core
+# postinstall, msgpackr for BullMQ's message packing, unrs-resolver for ESLint).
+allowBuilds:
+  '@nestjs/core': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  argon2: true
+  msgpackr-extract: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true

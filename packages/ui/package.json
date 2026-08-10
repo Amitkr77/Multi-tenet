@@ -1,0 +1,19 @@
+{
+  "name": "@saas/ui",
+  "private": true,
+  "version": "0.1.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "lint": "echo \"(ui) no lint configured yet\"",
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0"
+  },
+  "devDependencies": {
+    "@saas/config": "workspace:*",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.6.0"
+  }
+}

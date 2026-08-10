@@ -1,0 +1,11 @@
+{
+  "name": "@saas/config",
+  "private": true,
+  "version": "0.1.0",
+  "main": "index.js",
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./eslint-config": "./eslint-config.js",
+    "./tailwind.config.base": "./tailwind.config.base.js"
+  }
+}

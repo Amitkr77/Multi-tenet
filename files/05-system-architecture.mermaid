@@ -1,0 +1,105 @@
+graph TB
+    subgraph Client["Client Layer"]
+        Browser["Customer Browser<br/>(Storefront)"]
+        Dashboard["Tenant / Admin Browser<br/>(Dashboard)"]
+    end
+
+    subgraph Edge["Edge / CDN"]
+        CDN["CloudFront CDN"]
+        DNS["DNS / Custom Domain Resolution"]
+    end
+
+    subgraph Frontend["Frontend — Next.js"]
+        NextApp["Next.js App<br/>(Landing, Auth, Dashboard, Storefront)"]
+    end
+
+    subgraph Backend["Backend — NestJS Modular Monolith"]
+        Gateway["API Gateway Layer<br/>(Auth Guard, Tenant Resolver, RBAC Guard)"]
+        AuthMod["Authentication Module"]
+        TenantMod["Tenant Module"]
+        ProductMod["Product / Inventory Module"]
+        OrderMod["Order / Checkout Module"]
+        CustomerMod["Customer Module"]
+        BillingMod["Billing / Subscription Module"]
+        PaymentMod["Payment Module"]
+        AnalyticsMod["Analytics Module"]
+        NotifMod["Notification Module"]
+        AuditMod["Audit Log Module"]
+    end
+
+    subgraph Async["Background Processing"]
+        BullMQ["BullMQ Worker<br/>(separate process)"]
+        Jobs["Jobs: emails, invoices,<br/>image processing, usage reconciliation"]
+    end
+
+    subgraph Data["Data Layer"]
+        Postgres[("PostgreSQL<br/>Shared DB / Shared Schema<br/>+ Row-Level Security")]
+        Redis[("Redis<br/>sessions, rate limits,<br/>usage counters, queues")]
+        S3[("S3 / Object Storage<br/>product images, invoices")]
+    end
+
+    subgraph External["External Services"]
+        StripeBilling["Stripe Billing<br/>(platform subscriptions)"]
+        StripeConnect["Stripe Connect<br/>(merchant payments)"]
+        EmailProvider["Transactional Email<br/>(SES / SendGrid)"]
+        ACM["ACM / Let's Encrypt<br/>(TLS for custom domains)"]
+    end
+
+    subgraph Observability["Observability"]
+        Logs["Structured Logs<br/>(tenant_id, request_id)"]
+        Metrics["Prometheus + Grafana"]
+    end
+
+    Browser --> CDN
+    Dashboard --> CDN
+    CDN --> NextApp
+    DNS --> CDN
+    NextApp --> Gateway
+
+    Gateway --> AuthMod
+    Gateway --> TenantMod
+    Gateway --> ProductMod
+    Gateway --> OrderMod
+    Gateway --> CustomerMod
+    Gateway --> BillingMod
+    Gateway --> PaymentMod
+    Gateway --> AnalyticsMod
+    Gateway --> NotifMod
+    Gateway --> AuditMod
+
+    AuthMod --> Postgres
+    TenantMod --> Postgres
+    ProductMod --> Postgres
+    OrderMod --> Postgres
+    CustomerMod --> Postgres
+    BillingMod --> Postgres
+    PaymentMod --> Postgres
+    AnalyticsMod --> Postgres
+    AuditMod --> Postgres
+
+    AuthMod --> Redis
+    Gateway --> Redis
+    BillingMod --> Redis
+
+    ProductMod --> S3
+    OrderMod --> S3
+
+    OrderMod -.enqueue.-> BullMQ
+    NotifMod -.enqueue.-> BullMQ
+    BillingMod -.enqueue.-> BullMQ
+    BullMQ --> Jobs
+    Jobs --> Postgres
+    Jobs --> S3
+    Jobs --> EmailProvider
+    BullMQ <--> Redis
+
+    BillingMod --> StripeBilling
+    PaymentMod --> StripeConnect
+    StripeBilling -.webhook.-> Gateway
+    StripeConnect -.webhook.-> Gateway
+
+    TenantMod --> ACM
+
+    Gateway --> Logs
+    Backend --> Metrics
+    Async --> Metrics

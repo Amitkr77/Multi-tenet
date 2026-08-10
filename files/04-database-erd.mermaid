@@ -1,0 +1,681 @@
+erDiagram
+    TENANT ||--o{ USER : "has staff"
+    TENANT ||--o{ ROLE : "defines"
+    TENANT ||--o{ PRODUCT : "owns"
+    TENANT ||--o{ CATEGORY : "owns"
+    TENANT ||--o{ BRAND : "owns"
+    TENANT ||--o{ CUSTOMER : "has"
+    TENANT ||--o{ ORDER : "receives"
+    TENANT ||--o{ COUPON : "creates"
+    TENANT ||--o{ SHIPPING_ZONE : "configures"
+    TENANT ||--o{ TAX_RULE : "configures"
+    TENANT ||--|| PAYMENT_ACCOUNT : "connects"
+    TENANT ||--o{ CUSTOM_DOMAIN : "registers"
+    TENANT ||--o{ WEBHOOK_SUBSCRIPTION : "configures"
+    TENANT ||--o{ WEBHOOK_DELIVERY : "logs"
+    TENANT ||--o{ DATA_EXPORT_REQUEST : "requests"
+    TENANT ||--o{ API_KEY : "issues"
+    USER ||--o{ API_KEY : "authenticates as (owner of the key)"
+    TENANT ||--|| SUBSCRIPTION : "subscribes to"
+    TENANT ||--o{ USAGE_COUNTER : "tracks"
+    TENANT ||--o{ INVOICE : "is billed via"
+    TENANT ||--o{ AUDIT_LOG : "generates"
+    TENANT ||--o{ NOTIFICATION : "sends"
+    TENANT ||--o{ TENANT_PLAN_OVERRIDE : "may have"
+    TENANT ||--o{ REVIEW : "hosts"
+
+    USER ||--o{ SESSION : "has (refresh tokens)"
+    PLAN_LIMIT ||--o{ TENANT_PLAN_OVERRIDE : "overridden by"
+
+    ROLE ||--o{ ROLE_PERMISSION : "has"
+    PERMISSION ||--o{ ROLE_PERMISSION : "granted via"
+    USER ||--o{ USER_ROLE : "assigned"
+    ROLE ||--o{ USER_ROLE : "assigned to"
+
+    PRODUCT ||--o{ PRODUCT_VARIANT : "has"
+    PRODUCT ||--o{ PRODUCT_IMAGE : "has"
+    PRODUCT }o--|| CATEGORY : "belongs to"
+    PRODUCT }o--|| BRAND : "belongs to"
+    PRODUCT ||--o{ PRODUCT_ATTRIBUTE_VALUE : "has"
+    PRODUCT ||--o{ REVIEW : "receives"
+    PRODUCT_VARIANT ||--|| INVENTORY : "tracked by"
+    PRODUCT_ATTRIBUTE ||--o{ PRODUCT_ATTRIBUTE_VALUE : "defines"
+
+    TENANT ||--o{ WAREHOUSE : "owns (one default, auto-created at registration)"
+    WAREHOUSE ||--o{ INVENTORY : "stocks"
+    INVENTORY ||--o{ INVENTORY_ADJUSTMENT : "audit trail"
+
+    CUSTOMER ||--o{ CUSTOMER_ADDRESS : "has"
+    CUSTOMER ||--o{ CUSTOMER_SESSION : "has (refresh tokens, storefront-only)"
+    CUSTOMER ||--o{ ORDER : "places"
+    CUSTOMER ||--o{ REVIEW : "writes"
+    CUSTOMER ||--o{ CART : "owns"
+
+    CART ||--o{ CART_ITEM : "contains"
+    CART_ITEM }o--|| PRODUCT_VARIANT : "references"
+
+    ORDER ||--o{ ORDER_ITEM : "contains"
+    ORDER ||--o| COUPON : "applies"
+    ORDER ||--o{ PAYMENT_TRANSACTION : "has"
+    ORDER ||--o{ REFUND : "may have"
+    ORDER ||--o{ COUPON_REDEMPTION : "recorded on"
+    ORDER_ITEM }o--|| PRODUCT_VARIANT : "references (nullable — SetNull on delete, see note)"
+
+    COUPON ||--o{ COUPON_REDEMPTION : "tracks usage via"
+    CUSTOMER ||--o{ COUPON_REDEMPTION : "redeems"
+
+    SHIPPING_ZONE ||--o{ SHIPPING_RATE : "has"
+
+    PAYMENT_ACCOUNT ||--o{ PAYMENT_TRANSACTION : "processes"
+    PAYMENT_TRANSACTION ||--o{ REFUND : "may be refunded via"
+
+    SUBSCRIPTION }o--|| PLAN : "based on"
+    PLAN ||--o{ PLAN_LIMIT : "defines"
+    SUBSCRIPTION ||--o{ INVOICE : "bills"
+
+    WEBHOOK_EVENT }o--|| TENANT : "scoped to (nullable for platform events)"
+    WEBHOOK_SUBSCRIPTION ||--o{ WEBHOOK_DELIVERY : "delivers"
+
+    TENANT {
+        uuid id PK
+        string name
+        string subdomain
+        string status "trial|active|past_due|suspended|offboarded"
+        uuid current_plan_id FK
+        timestamp past_due_since "nullable — set on active->past_due, cleared on recovery; drives the dunning grace-period check (Phase 5)"
+        string currency "default 'usd' — store profile setting only; Product/Order pricing is still implicitly USD (Phase 6)"
+        string timezone "nullable — store profile setting only (Phase 6)"
+        timestamp offboarded_at "nullable — set on transition into offboarded; drives DataRetentionProcessor's retention-deletion check, same convention as past_due_since (Compliance)"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    USER {
+        uuid id PK
+        uuid tenant_id FK
+        string email
+        string password_hash
+        boolean two_factor_enabled
+        boolean is_active
+        timestamp created_at
+    }
+
+    SESSION {
+        uuid id PK
+        uuid user_id FK
+        string refresh_token_hash
+        string user_agent
+        string ip_address
+        timestamp created_at
+        timestamp expires_at
+        timestamp revoked_at
+    }
+
+    ROLE {
+        uuid id PK
+        uuid tenant_id FK
+        string name
+        boolean is_system_role
+    }
+
+    PERMISSION {
+        uuid id PK
+        string code
+        string description
+    }
+
+    ROLE_PERMISSION {
+        uuid role_id FK
+        uuid permission_id FK
+    }
+
+    USER_ROLE {
+        uuid user_id FK
+        uuid role_id FK
+        uuid tenant_id FK
+    }
+
+    PRODUCT {
+        uuid id PK
+        uuid tenant_id FK
+        uuid category_id FK
+        uuid brand_id FK
+        string name
+        string slug
+        text description
+        decimal base_price
+        string status "draft | published"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% tenant_id is denormalized onto every child table below (not just
+    %% joinable via product_id/variant_id/etc.) — Postgres RLS policies need
+    %% an equality-comparable column on the row itself, not a join.
+    PRODUCT_VARIANT {
+        uuid id PK
+        uuid product_id FK
+        uuid tenant_id FK
+        string sku
+        decimal price "null = inherits product.base_price"
+        jsonb options
+        timestamp created_at
+    }
+
+    PRODUCT_IMAGE {
+        uuid id PK
+        uuid product_id FK
+        uuid tenant_id FK
+        string url
+        string key "S3 object key, for delete"
+        int position
+        timestamp created_at
+    }
+
+    CATEGORY {
+        uuid id PK
+        uuid tenant_id FK
+        uuid parent_id FK
+        string name
+        string slug
+    }
+
+    BRAND {
+        uuid id PK
+        uuid tenant_id FK
+        string name
+        string slug
+    }
+
+    PRODUCT_ATTRIBUTE {
+        uuid id PK
+        uuid tenant_id FK
+        string name
+    }
+
+    PRODUCT_ATTRIBUTE_VALUE {
+        uuid id PK
+        uuid product_id FK
+        uuid tenant_id FK
+        uuid attribute_id FK
+        string value
+    }
+
+    WAREHOUSE {
+        uuid id PK
+        uuid tenant_id FK
+        string name
+        boolean is_default
+        timestamp created_at
+    }
+
+    INVENTORY {
+        uuid id PK
+        uuid variant_id FK
+        uuid warehouse_id FK
+        uuid tenant_id FK
+        int quantity_on_hand
+        int low_stock_threshold
+        timestamp updated_at
+    }
+
+    %% FR-I-05 audit trail — one row per adjustment, never mutated.
+    INVENTORY_ADJUSTMENT {
+        uuid id PK
+        uuid inventory_id FK
+        uuid tenant_id FK
+        int delta
+        string reason_code "sale|return|damage|manual_correction|initial_stock"
+        string note
+        uuid actor_user_id FK
+        timestamp created_at
+    }
+
+    CUSTOMER {
+        uuid id PK
+        uuid tenant_id FK
+        string email
+        string password_hash "nullable until customer sets one"
+        string first_name
+        string last_name
+        string phone
+        string tags "array"
+        boolean is_active
+        timestamp email_verified_at
+        timestamp created_at
+    }
+
+    CUSTOMER_ADDRESS {
+        uuid id PK
+        uuid customer_id FK
+        uuid tenant_id FK
+        string line1
+        string city
+        string country
+        boolean is_default
+    }
+
+    %% Mirrors SESSION exactly but for customer_id — a deliberately separate
+    %% table (not a polymorphic Session) so staff and storefront-customer
+    %% auth never share a code path. NOT RLS-protected, like SESSION —
+    %% isolation is via the customer_id FK only.
+    CUSTOMER_SESSION {
+        uuid id PK
+        uuid customer_id FK
+        uuid tenant_id FK
+        string refresh_token_hash
+        string user_agent
+        string ip_address
+        timestamp created_at
+        timestamp expires_at
+        timestamp revoked_at
+    }
+
+    %% Cart is scoped to a logged-in customer only (FR-O-02) — no anonymous/
+    %% guest cart, so no cart-merge-on-login case. One cart per (tenant,
+    %% customer) — @@unique enforces this, not modeled by a status field.
+    CART {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    CART_ITEM {
+        uuid id PK
+        uuid cart_id FK
+        uuid tenant_id FK
+        uuid variant_id FK
+        int quantity
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% Shipping address is snapshotted directly onto the row (line1/city/
+    %% etc, omitted here for brevity), not an FK to CUSTOMER_ADDRESS —
+    %% same historical-accuracy reasoning as ORDER_ITEM's snapshot below.
+    ORDER {
+        uuid id PK
+        uuid tenant_id FK
+        uuid customer_id FK
+        string status "pending|paid|fulfilled|shipped|delivered|cancelled|refunded"
+        decimal subtotal
+        decimal tax_total
+        decimal shipping_total
+        decimal discount_total
+        decimal grand_total
+        uuid coupon_id FK
+        string tracking_number
+        string fulfillment_carrier
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% variant_id nullable + SetNull (not Restrict/Cascade) — deleting the
+    %% underlying variant/product must never be blocked by, or destroy,
+    %% order history; product_name/sku/unit_price are the snapshot of
+    %% record once the live FK is gone.
+    ORDER_ITEM {
+        uuid id PK
+        uuid order_id FK
+        uuid tenant_id FK
+        uuid variant_id FK "nullable — see note"
+        string product_name "snapshotted at purchase time"
+        string sku "snapshotted at purchase time"
+        int quantity
+        decimal unit_price "snapshotted at purchase time"
+        decimal line_total
+    }
+
+    %% restricted_product_ids/restricted_category_ids: native scalar-id
+    %% arrays (same shape as CUSTOMER.tags), not join tables — FR-CP-03.
+    COUPON {
+        uuid id PK
+        uuid tenant_id FK
+        string code
+        string type "percentage|fixed"
+        decimal value
+        int usage_limit
+        int per_customer_limit
+        int used_count
+        decimal min_order_value
+        string restricted_product_ids "array"
+        string restricted_category_ids "array"
+        boolean is_active
+        timestamp expires_at
+        timestamp created_at
+    }
+
+    %% Backs FR-CP-02's per-customer usage limit + audit trail;
+    %% Coupon.used_count is the fast total-usage check.
+    COUPON_REDEMPTION {
+        uuid id PK
+        uuid tenant_id FK
+        uuid coupon_id FK
+        uuid customer_id FK
+        uuid order_id FK
+        timestamp created_at
+    }
+
+    %% One row per tenant, auto-created (not_started) at registration —
+    %% same forward-compatible-stub move as WAREHOUSE.
+    PAYMENT_ACCOUNT {
+        uuid id PK
+        uuid tenant_id FK "unique"
+        string stripe_account_id
+        string onboarding_status "not_started|pending|active|restricted"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PAYMENT_TRANSACTION {
+        uuid id PK
+        uuid tenant_id FK
+        uuid order_id FK
+        uuid payment_account_id FK
+        string stripe_payment_intent_id "unique"
+        string status "pending|succeeded|failed|refunded|partially_refunded"
+        decimal amount
+        decimal application_fee_amount
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    REFUND {
+        uuid id PK
+        uuid tenant_id FK
+        uuid order_id FK
+        uuid payment_transaction_id FK
+        string stripe_refund_id
+        decimal amount
+        string reason
+        string status "pending|succeeded|failed"
+        uuid actor_user_id FK
+        timestamp created_at
+    }
+
+    SHIPPING_ZONE {
+        uuid id PK
+        uuid tenant_id FK
+        string name
+        jsonb regions "country/state codes, e.g. [US, CA-BC]"
+        timestamp created_at
+    }
+
+    %% flat_rate + free_above_threshold only this phase — FR-S-02's
+    %% weight-based option deferred (no weight column on Product/Variant yet).
+    SHIPPING_RATE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid shipping_zone_id FK
+        string name
+        string type "flat_rate|free_above_threshold"
+        decimal amount
+        decimal free_above_amount
+        timestamp created_at
+    }
+
+    TAX_RULE {
+        uuid id PK
+        uuid tenant_id FK
+        string region
+        decimal rate "percentage"
+        uuid category_id FK "optional restriction"
+        timestamp created_at
+    }
+
+    %% Phase 4 — RLS-protected (standard simple-equality policy, same as
+    %% every Phase 2/3 commerce table, non-null tenant_id). rating is 1-5
+    %% (Zod + a DB CHECK constraint). status: pending (default, not public) /
+    %% approved (public) / rejected / hidden. Unique on
+    %% (tenant_id, product_id, customer_id) — one review per customer per
+    %% product. No analytics table exists anywhere in this schema —
+    %% Analytics (FR-AN-01..05) computes on the fly from ORDER/ORDER_ITEM/
+    %% CUSTOMER/INVENTORY, never persisted.
+    REVIEW {
+        uuid id PK
+        uuid tenant_id FK
+        uuid product_id FK
+        uuid customer_id FK
+        int rating "1-5"
+        text comment "nullable"
+        string status "pending/approved/rejected/hidden"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    %% Phase 5 — implemented. No RLS (belongs to the platform, not a tenant —
+    %% same reasoning as PERMISSION). is_default marks the one plan a fresh
+    %% registration's Subscription is auto-created on (ensureDefaultSubscriptionForTenant);
+    %% exactly one row should have it true, enforced by seed/convention, not
+    %% a DB constraint. archived_at is a soft-archive (never a hard delete —
+    %% existing Subscription.plan_id FKs must survive); archived plans drop
+    %% out of the public GET /plans list but keep billing their existing
+    %% subscribers unchanged.
+    PLAN {
+        uuid id PK
+        string name
+        decimal price
+        string billing_interval
+        boolean is_default
+        string stripe_price_id "nullable — null for the free plan"
+        timestamp archived_at "nullable — soft-archive, see note"
+    }
+
+    PLAN_LIMIT {
+        uuid id PK
+        uuid plan_id FK
+        string metric "staff_seats|product_count|order_volume"
+        int max_value
+    }
+
+    %% Phase 5 — implemented. RLS-protected (standard tenant policy) even
+    %% though only Super Admin ever WRITES a row (via the unscoped base
+    %% client) — PlanLimitGuard reads it through the normal tenant-scoped
+    %% client so a tenant transparently sees only its own override. An
+    %% active (non-expired) override for a metric always wins over the
+    %% tenant's plan's own PLAN_LIMIT row.
+    TENANT_PLAN_OVERRIDE {
+        uuid id PK
+        uuid tenant_id FK
+        string metric
+        int override_value
+        string reason
+        uuid granted_by_user_id "plain string, not a relation — same convention as REFUND.actor_user_id"
+        timestamp expires_at
+        timestamp created_at
+    }
+
+    %% Phase 5 — implemented. RLS-protected (standard tenant policy). One
+    %% row per tenant, auto-created on the isDefault Plan at registration
+    %% (ensureDefaultSubscriptionForTenant) — stripe_customer_id/
+    %% stripe_subscription_id stay null until the tenant's first real
+    %% upgrade (StripeService#upsertSubscription creates them lazily).
+    SUBSCRIPTION {
+        uuid id PK
+        uuid tenant_id FK "unique"
+        uuid plan_id FK
+        string stripe_customer_id "nullable"
+        string stripe_subscription_id "nullable, unique"
+        string status "mirrors Stripe's Subscription.status vocabulary"
+        timestamp current_period_end "nullable"
+    }
+
+    %% Phase 5 — implemented. RLS-protected (standard tenant policy). Only
+    %% order_volume uses this table currently — CheckoutService's atomic
+    %% upsert increments it before Order creation, compensating with a
+    %% decrement if the post-increment count exceeds the effective limit.
+    USAGE_COUNTER {
+        uuid id PK
+        uuid tenant_id FK
+        string metric
+        string period "e.g. 2026-08 — calendar-month bucket"
+        int count "CHECK (count >= 0)"
+    }
+
+    %% Phase 5 — implemented. No ERD stub existed pre-Phase-5 (designed
+    %% fresh alongside the billing webhook handler). RLS-protected (standard
+    %% tenant policy). Populated EXCLUSIVELY by the /webhooks/stripe/billing
+    %% handler (invoice.payment_failed / invoice.paid) — never a live "list
+    %% invoices" Stripe API call. Links out to Stripe's own hosted invoice
+    %% page/PDF rather than rendering one locally.
+    INVOICE {
+        uuid id PK
+        uuid tenant_id FK
+        uuid subscription_id FK "nullable"
+        string stripe_invoice_id "unique"
+        string status "mirrors Stripe's Invoice.status vocabulary (open|paid|...)"
+        decimal amount_due
+        decimal amount_paid
+        string currency
+        string hosted_invoice_url "nullable"
+        string invoice_pdf_url "nullable"
+        timestamp period_start "nullable"
+        timestamp period_end "nullable"
+        timestamp created_at
+    }
+
+    %% Phase 6 (round 1) — implemented. NO RLS policy (a deliberate
+    %% correction found during verification, not an oversight): must be
+    %% resolvable by TenantResolverGuard from an arbitrary Host header
+    %% BEFORE any tenant context exists — the same bootstrap reasoning
+    %% tenants/plans/permissions already solve the identical way. Tenant
+    %% isolation for its own CRUD routes is app-layer (explicit
+    %% `where: {id, tenantId}`), same category as Tenant's own isolation.
+    %% Ownership verification (a real dns.promises.resolveTxt() lookup
+    %% against `_saas-verify.<domain>`) is unstubbed; TLS/cert provisioning
+    %% is stub-mode in this environment (no AWS credentials).
+    CUSTOM_DOMAIN {
+        uuid id PK
+        uuid tenant_id FK
+        string domain "globally unique"
+        string status "pending_verification|verified|failed"
+        string verification_token
+        timestamp verified_at "nullable"
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    AUDIT_LOG {
+        uuid id PK
+        uuid tenant_id FK
+        uuid actor_user_id FK
+        string action
+        jsonb metadata
+        timestamp created_at
+    }
+
+    NOTIFICATION {
+        uuid id PK
+        uuid tenant_id FK
+        string type
+        string channel
+        string status
+    }
+
+    %% Unique constraint (source, event_id) enforces idempotent webhook
+    %% processing — insert-or-skip. tenant_id is nullable — a webhook arrives
+    %% with no authenticated tenant context whatsoever, so it's always
+    %% written via the unscoped base Prisma client, never the tenant-scoped
+    %% one. INBOUND Stripe events only — see WEBHOOK_SUBSCRIPTION/
+    %% WEBHOOK_DELIVERY below for OUTBOUND (Phase 6, tenant-configured)
+    %% webhooks, a distinct feature. (plan_limits, custom_domains, api_keys,
+    %% and this table are the schema's no-RLS "must be readable/writable with zero
+    %% tenant context" tables — no longer the only one.)
+    WEBHOOK_EVENT {
+        uuid id PK
+        uuid tenant_id FK "nullable, no RLS policy"
+        string source
+        string event_id
+        boolean processed
+        timestamp created_at
+    }
+
+    %% Phase 6 (round 1) — implemented. RLS-protected (standard tenant
+    %% policy) — unlike CUSTOM_DOMAIN, these are only ever read/written at
+    %% the normal HANDLER phase (tenant context already resolved), never
+    %% during guard-phase tenant resolution. `secret` is generated at
+    %% creation, returned to the tenant exactly once, never shown again —
+    %% used to HMAC-sign every delivery (X-Webhook-Signature header),
+    %% mirroring how Stripe signs webhooks to us with sender/receiver roles
+    %% reversed. `event_types` is a fixed, code-defined vocabulary (order.
+    %% created/order.status_changed/product.created/product.updated/
+    %% product.deleted), not a user-managed taxonomy.
+    WEBHOOK_SUBSCRIPTION {
+        uuid id PK
+        uuid tenant_id FK
+        string url
+        string secret "shown once, at creation only"
+        string event_types "array — fixed vocabulary"
+        boolean is_active
+        timestamp created_at
+    }
+
+    %% Phase 6 (round 1) — implemented. RLS-protected. One row per delivery
+    %% attempt-set for one (subscription, event) pair, created by
+    %% WebhookDispatchService the moment the domain event fires. Retries are
+    %% BullMQ's own job-level attempts/backoff (5 attempts, exponential from
+    %% 5s) — status stays `pending` through every retry, flipping to
+    %% `delivered` (2xx response) or `failed` (only once every retry is
+    %% exhausted) as the sole terminal states.
+    WEBHOOK_DELIVERY {
+        uuid id PK
+        uuid tenant_id FK
+        uuid subscription_id FK
+        string event_type
+        jsonb payload
+        string status "pending|delivered|failed"
+        int response_status "nullable"
+        int attempt
+        timestamp created_at
+        timestamp delivered_at "nullable"
+    }
+
+    %% Compliance (FR-AU-03, NFR-CP-01/02) — implemented. RLS-protected
+    %% (standard tenant policy). One row per export request, created via
+    %% either POST /tenants/me/export (self-service) or automatically when a
+    %% Super Admin transitions a tenant to offboarded (see TENANT.
+    %% offboarded_at). download_url is a presigned (time-limited, 7-day) S3/
+    %% MinIO GET URL — never the public/unexpiring URL product images use,
+    %% since this blob can contain PII. Populated by apps/worker's
+    %% DataExportProcessor.
+    DATA_EXPORT_REQUEST {
+        uuid id PK
+        uuid tenant_id FK
+        uuid requested_by_user_id "nullable, plain string — same convention as TENANT_PLAN_OVERRIDE.granted_by_user_id (may be a platform Super Admin, not a tenant member)"
+        string status "pending|ready|failed"
+        string download_url "nullable — presigned, set once ready"
+        timestamp expires_at "nullable — matches the presigned URL's expiry"
+        timestamp created_at
+        timestamp ready_at "nullable"
+    }
+
+    %% Public API (M50-M54) — implemented. Deliberately NO RLS policy — the
+    %% same "bootstrap table" reasoning as CUSTOM_DOMAIN and PLAN_LIMIT: a
+    %% brand-new global guard (ApiKeyGuard) must resolve a key with ZERO
+    %% tenant context (that's the entire point — the request carries no other
+    %% tenant signal until the key itself supplies one), which is
+    %% structurally incompatible with FORCE ROW LEVEL SECURITY. Isolation for
+    %% this table's own management CRUD is app-layer (`where: {id,
+    %% tenant_id}`), same category as CUSTOM_DOMAIN's own isolation.
+    %% key_hash is SHA-256 (not bcrypt/argon2 — these are high-entropy random
+    %% tokens, not user-chosen passwords), unique. The full plain key
+    %% (sat_<48 hex chars>) is shown exactly once, at creation, never again —
+    %% only key_preview (last 4 chars) is ever displayed afterward. A key
+    %% always authenticates as user_id and inherits that user's real,
+    %% currently-granted permissions on every request (no separate scoped-
+    %% permission model yet). revoked_at is a soft-revoke, never a hard
+    %% delete, same audit-trail convention as WEBHOOK_SUBSCRIPTION.
+    API_KEY {
+        uuid id PK
+        uuid tenant_id FK "no RLS policy"
+        uuid user_id FK "the identity this key authenticates as"
+        string name
+        string key_hash "SHA-256, unique"
+        string key_preview "last 4 chars, display-only"
+        timestamp last_used_at "nullable"
+        timestamp expires_at "nullable"
+        timestamp revoked_at "nullable — soft-revoke"
+        timestamp created_at
+    }

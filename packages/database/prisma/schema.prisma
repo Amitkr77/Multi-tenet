@@ -1,0 +1,1265 @@
+// Phase 1 subset of files/04-database-erd.mermaid.
+// Commerce/billing/domains/webhook tables are deferred to their roadmap phases (not stubbed).
+// See arch.md §4 for the RLS isolation model this schema is built to support.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Platform / Tenant
+// ---------------------------------------------------------------------------
+
+enum TenantStatus {
+  trial
+  active
+  past_due
+  suspended
+  offboarded
+}
+
+model Tenant {
+  id            String       @id @default(uuid())
+  name          String
+  subdomain     String       @unique
+  status        TenantStatus @default(trial)
+  currentPlanId String?      @map("current_plan_id")
+  plan          Plan?        @relation(fields: [currentPlanId], references: [id])
+  // Set on transition INTO past_due (billing-webhook.service.ts), cleared on
+  // transition back to active. Drives DunningProcessor's grace-period check
+  // (packages/database has no cron of its own — apps/worker's dunning
+  // processor queries this directly via createBasePrismaClient).
+  pastDueSince  DateTime?    @map("past_due_since")
+  // Phase 6 — closes a pre-existing drift bug: packages/shared-types'
+  // updateTenantSchema already declared both fields (PATCH /tenants/me
+  // would throw Prisma's "unknown argument" error if a caller ever actually
+  // sent either). No currency-aware pricing anywhere yet (Product/Order
+  // amounts are still implicitly USD) — this is a store profile/settings
+  // value only this phase, same as `name`/`subdomain`; real multi-currency
+  // commerce is a separate, deferred Phase 6 item.
+  currency      String       @default("usd")
+  timezone      String?
+  // Set the moment status transitions INTO offboarded (TenantsService
+  // #updateStatus), same convention as pastDueSince above. Drives
+  // apps/worker's DataRetentionProcessor — a hard-delete grace period
+  // (FR-AU-03/NFR-CP-02), mirroring exactly how pastDueSince drives
+  // DunningProcessor's suspension grace period.
+  offboardedAt  DateTime?    @map("offboarded_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  users     User[]
+  roles     Role[]
+  auditLogs AuditLog[]
+
+  categories        Category[]
+  brands            Brand[]
+  products          Product[]
+  productAttributes ProductAttribute[]
+  warehouses        Warehouse[]
+  customers         Customer[]
+
+  carts          Cart[]
+  coupons        Coupon[]
+  shippingZones  ShippingZone[]
+  taxRules       TaxRule[]
+  orders         Order[]
+  paymentAccount PaymentAccount?
+  webhookEvents  WebhookEvent[]
+  reviews        Review[]
+
+  subscription  Subscription?
+  usageCounters UsageCounter[]
+  planOverrides TenantPlanOverride[]
+  invoices      Invoice[]
+
+  customDomains        CustomDomain[]
+  webhookSubscriptions WebhookSubscription[]
+  webhookDeliveries    WebhookDelivery[]
+  dataExportRequests   DataExportRequest[]
+  apiKeys              ApiKey[]
+
+  @@map("tenants")
+}
+
+// Extended Phase 5 — was a single-row stub ("Free Trial", purely a valid FK
+// target for Tenant.currentPlanId). Now a real, Super-Admin-manageable plan
+// tier: isDefault marks the plan auto-assigned at tenant registration
+// (AuthService#register queries `where: { isDefault: true }` — NOT
+// `orderBy: createdAt` as it did before Plan CRUD existed, since a second
+// plan could then be created with an earlier-sorting createdAt and silently
+// become "the default"); stripePriceId is null for the free plan (never
+// billed via Stripe); archivedAt is a soft-archive (FR-P-04's "create, edit,
+// archive" — never a hard delete, Subscription.planId FKs must survive).
+model Plan {
+  id              String    @id @default(uuid())
+  name            String
+  price           Decimal   @default(0) @db.Decimal(10, 2)
+  billingInterval String    @default("month") @map("billing_interval")
+  isDefault       Boolean   @default(false) @map("is_default")
+  stripePriceId   String?   @map("stripe_price_id")
+  archivedAt      DateTime? @map("archived_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  tenants       Tenant[]
+  limits        PlanLimit[]
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+// ---------------------------------------------------------------------------
+// Identity & Access
+// ---------------------------------------------------------------------------
+
+model User {
+  id       String  @id @default(uuid())
+  // Nullable: a platform Super Admin has no tenant (arch.md §6 / this plan's
+  // "ERD/FR tension" note). A person in multiple tenants has one row per tenant.
+  tenantId String? @map("tenant_id")
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  email            String
+  passwordHash     String?   @map("password_hash") // null until an invited staff member accepts
+  twoFactorEnabled       Boolean   @default(false) @map("two_factor_enabled")
+  // AES-256-GCM encrypted (TotpService) — null until 2FA is fully enabled.
+  twoFactorSecret        String?   @map("two_factor_secret")
+  // Temporary: set during 2FA setup, cleared once the user verifies the first code.
+  twoFactorPendingSecret String?   @map("two_factor_pending_secret")
+  isActive         Boolean   @default(true) @map("is_active")
+  emailVerifiedAt  DateTime? @map("email_verified_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  sessions           Session[]
+  userRoles          UserRole[]
+  verificationTokens VerificationToken[]
+  auditLogsAsActor   AuditLog[]          @relation("AuditLogActor")
+  apiKeys            ApiKey[]
+
+  // Same email may exist once per tenant, and once more as a null-tenant Super Admin;
+  // Postgres treats each NULL as distinct so this does not collapse multiple Super Admins.
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+// Not RLS-protected itself (no policy on this table, matching the ERD) —
+// isolation is via the userId FK. `tenantId` is denormalized from the owning
+// User purely so AuthService#refresh can resolve which tenant to SET LOCAL
+// to before it touches the (RLS-protected) `users` table — a refresh token
+// is, by design, the one thing a caller presents *before* any tenant context
+// exists, same bootstrapping problem as Tenant creation itself. Same
+// precedent as UserRole.tenantId being redundant-but-necessary.
+model Session {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId         String?   @map("tenant_id")
+  refreshTokenHash String    @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
+  ipAddress        String?   @map("ip_address")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@map("sessions")
+}
+
+model Role {
+  id           String   @id @default(uuid())
+  // Nullable: the global `super_admin` system role has no tenant.
+  tenantId     String?  @map("tenant_id")
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  isSystemRole Boolean  @default(false) @map("is_system_role")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("roles")
+}
+
+// Global — not tenant-owned, no RLS policy needed.
+model Permission {
+  id          String @id @default(uuid())
+  code        String @unique // e.g. "products.create", "orders.refund" — 03-roles-permission-matrix.md
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+// No RLS (files/09-security-review.md audit — no tenant_id column of its
+// own, unlike its parent Role). Every rolePermission access, read or write,
+// is reached exclusively through an already-tenant-scoped Role/UserRole:
+// RolesService#update/remove first does `role.findFirst({id, tenantId})`
+// before any rolePermission mutation (a client-supplied roleId for another
+// tenant's role 404s before touching this table), and both
+// RolesService#list and granted-permissions.ts's resolveGrantedPermissions
+// only ever reach it via Prisma's nested `include` off a `role`/`userRole`
+// query that's itself tenant-filtered — never a raw, client-suppliable
+// roleId queried directly against this table. Empirically confirmed: an
+// owner-tier JWT for one tenant attempting to PATCH/DELETE another tenant's
+// real (non-guessed) roleId via `/roles/:id` gets 404, and the target
+// tenant's role_permissions rows are provably untouched.
+model RolePermission {
+  roleId       String     @map("role_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @map("permission_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId   String  @map("user_id")
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId   String  @map("role_id")
+  role     Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  // Redundant with role.tenantId per the ERD, but kept as its own column —
+  // it's the RLS-scoping column for this join table.
+  tenantId String? @map("tenant_id")
+
+  @@id([userId, roleId])
+  @@index([tenantId])
+  @@map("user_roles")
+}
+
+// Not in the original ERD — added because register/verify-email/forgot-password/
+// staff-invite (FR-T-02, FR-A-04, FR-U-02) all need a hashed, expiring, one-time
+// token somewhere. Kept generic (one table, a `type` discriminator) rather than
+// three near-identical tables.
+enum VerificationTokenType {
+  email_verification
+  password_reset
+  staff_invite
+}
+
+model VerificationToken {
+  id        String                @id @default(uuid())
+  userId    String                @map("user_id")
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Denormalized from the owning User — same rationale as Session.tenantId
+  // above: verify-email/reset-password must resolve tenant scope for the
+  // eventual `users` table write before any tenant context otherwise exists.
+  tenantId  String?               @map("tenant_id")
+  type      VerificationTokenType
+  tokenHash String                @map("token_hash")
+  expiresAt DateTime              @map("expires_at")
+  usedAt    DateTime?             @map("used_at")
+  createdAt DateTime              @default(now()) @map("created_at")
+
+  @@index([userId, type])
+  @@index([tokenHash])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Audit
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  tenantId    String?  @map("tenant_id") // null for true platform-wide actions
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorUserId String?  @map("actor_user_id")
+  actorUser   User?    @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  action      String // e.g. "role.assign", "tenant.status_change", "tenant.impersonate"
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Commerce — Phase 2 (products, categories, brands, attributes, variants,
+// inventory, customers). Every table here has its own non-null `tenant_id`
+// (unlike User/Role/AuditLog, none of these have a legitimate platform-level
+// case), so the RLS policy for all of them is the simple equality form — no
+// null-tenant carve-out needed. See the enable_rls_commerce migration.
+// ---------------------------------------------------------------------------
+
+model Category {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Self-relation for nesting (FR-PR-03). SetNull rather than Cascade on the
+  // parent link — deleting a parent category orphans its children to
+  // top-level rather than deleting them, which is the safer default.
+  parentId String?    @map("parent_id")
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  name      String
+  slug      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  products Product[]
+  taxRules TaxRule[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("categories")
+}
+
+model Brand {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  slug      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  products Product[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@map("brands")
+}
+
+enum ProductStatus {
+  draft
+  published
+}
+
+model Product {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  categoryId String?   @map("category_id")
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brandId    String?   @map("brand_id")
+  brand      Brand?    @relation(fields: [brandId], references: [id], onDelete: SetNull)
+
+  name        String
+  slug        String
+  description String?
+  basePrice   Decimal       @map("base_price") @db.Decimal(10, 2)
+  status      ProductStatus @default(draft) // draft vs. published — FR-PR-08
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  images          ProductImage[]
+  variants        ProductVariant[]
+  attributeValues ProductAttributeValue[]
+  reviews         Review[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, categoryId])
+  @@map("products")
+}
+
+// Dedicated model (not a JSON column on Product) — needs individual
+// delete/reorder, and `key` tracks the S3 object so deleting the DB row can
+// also clean up storage (see apps/api's storage module).
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenantId  String   @map("tenant_id")
+  url       String
+  key       String
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([productId])
+  @@map("product_images")
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenantId  String   @map("tenant_id")
+  sku       String
+  price     Decimal? @db.Decimal(10, 2) // null = inherits Product.basePrice
+  options   Json     @default("{}") // e.g. { "size": "M", "color": "Red" }
+  createdAt DateTime @default(now()) @map("created_at")
+
+  inventory  Inventory[]
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model ProductAttribute {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  values ProductAttributeValue[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("product_attributes")
+}
+
+model ProductAttributeValue {
+  id          String           @id @default(uuid())
+  productId   String           @map("product_id")
+  product     Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tenantId    String           @map("tenant_id")
+  attributeId String           @map("attribute_id")
+  attribute   ProductAttribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  value       String
+
+  @@index([tenantId])
+  @@index([productId])
+  @@map("product_attribute_values")
+}
+
+// Multi-warehouse itself is Phase 6 (FR-I-03) — this stub exists now purely
+// so Inventory can carry warehouse_id from day one, same forward-compatible
+// move as Phase 1's Plan table. Exactly one `isDefault` row is auto-created
+// per tenant at registration (ensureDefaultWarehouseForTenant).
+model Warehouse {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  inventory Inventory[]
+
+  @@index([tenantId])
+  @@map("warehouses")
+}
+
+model Inventory {
+  id          String         @id @default(uuid())
+  variantId   String         @map("variant_id")
+  variant     ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  warehouseId String         @map("warehouse_id")
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  tenantId    String         @map("tenant_id")
+
+  quantityOnHand    Int      @default(0) @map("quantity_on_hand")
+  lowStockThreshold Int?     @map("low_stock_threshold")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  adjustments InventoryAdjustment[]
+
+  @@unique([variantId, warehouseId])
+  @@index([tenantId])
+  @@map("inventory")
+}
+
+// FR-I-05: every stock change logged with a reason code.
+enum InventoryReasonCode {
+  sale
+  return
+  damage
+  manual_correction
+  initial_stock
+}
+
+model InventoryAdjustment {
+  id          String              @id @default(uuid())
+  inventoryId String              @map("inventory_id")
+  inventory   Inventory           @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  tenantId    String              @map("tenant_id")
+  delta       Int // positive or negative
+  reasonCode  InventoryReasonCode @map("reason_code")
+  note        String?
+  actorUserId String?             @map("actor_user_id")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([inventoryId])
+  @@index([inventoryId, createdAt])
+  @@map("inventory_adjustments")
+}
+
+// Storefront customers — a separate identity space from staff Users (per the
+// ERD: distinct entity, zero dashboard access). `passwordHash` is nullable:
+// a tenant can create/import a customer record (FR-C-03) before that person
+// ever sets a password to actually log in to the storefront themselves.
+model Customer {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  email           String
+  passwordHash    String?   @map("password_hash")
+  firstName       String?   @map("first_name")
+  lastName        String?   @map("last_name")
+  phone           String?
+  tags            String[]  @default([]) // segmentation — FR-C-05 (e.g. "vip", "wholesale")
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  addresses         CustomerAddress[]
+  sessions          CustomerSession[]
+  carts             Cart[]
+  orders            Order[]
+  couponRedemptions CouponRedemption[]
+  reviews           Review[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("customers")
+}
+
+model CustomerAddress {
+  id         String   @id @default(uuid())
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenantId   String   @map("tenant_id")
+  line1      String
+  line2      String?
+  city       String
+  state      String?
+  postalCode String?  @map("postal_code")
+  country    String
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+// Mirrors Session exactly (same rotation/reuse-detection logic reused
+// as-is by CustomerSessionsService) but for `customerId` — kept as a
+// separate table rather than a polymorphic Session so staff and customer
+// auth never share a code path that could confuse the two token types.
+// NOT RLS-protected (like Session) — isolation is via the customerId FK;
+// CustomerSessionsService always uses PrismaService.base (no SET LOCAL),
+// same as SessionsService. (enable_rls_commerce originally — incorrectly —
+// gave this table a policy; fix_customer_sessions_no_rls removes it.)
+model CustomerSession {
+  id               String    @id @default(uuid())
+  customerId       String    @map("customer_id")
+  customer         Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tenantId         String    @map("tenant_id")
+  refreshTokenHash String    @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
+  ipAddress        String?   @map("ip_address")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+
+  @@index([customerId])
+  @@index([refreshTokenHash])
+  @@index([tenantId])
+  @@map("customer_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Commerce — Phase 3 (cart, checkout, orders, coupons, shipping, tax, Stripe
+// Connect payments/refunds, webhook idempotency). Every table here has its
+// own non-null `tenant_id` and gets the same simple-equality RLS policy as
+// every Phase 2 commerce table — EXCEPT WebhookEvent, whose tenantId is
+// nullable and which is NOT RLS-protected at all (see that model's comment).
+//
+// Platform Stripe Billing (charging tenants for their own SaaS subscription)
+// is deferred to Phase 5, where the real Plan/Subscription data model this
+// phase's own Plan-table comment already promises gets built — wiring
+// recurring charges against today's one-row Plan stub would be premature.
+// This phase is Stripe *Connect* (merchant payment acceptance) only.
+// ---------------------------------------------------------------------------
+
+// FR-O-02 scopes cart persistence to logged-in customers — no anonymous/
+// guest cart, so there's no cart-merge-on-login case to design for.
+model Cart {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items CartItem[]
+
+  @@unique([tenantId, customerId])
+  @@index([tenantId])
+  @@map("carts")
+}
+
+model CartItem {
+  id       String @id @default(uuid())
+  cartId   String @map("cart_id")
+  cart     Cart   @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  tenantId String @map("tenant_id")
+
+  variantId String         @map("variant_id")
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([cartId, variantId])
+  @@index([tenantId])
+  @@map("cart_items")
+}
+
+enum CouponType {
+  percentage
+  fixed
+}
+
+// FR-CP-03's product/category restriction is a plain scalar-id list (native
+// Postgres array), not a join table — same "list of ids, no attributes of
+// its own" shape as Customer.tags, not a RolePermission-style relation.
+model Coupon {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code                  String
+  type                  CouponType
+  value                 Decimal    @db.Decimal(10, 2)
+  usageLimit            Int?       @map("usage_limit")
+  perCustomerLimit      Int?       @map("per_customer_limit")
+  usedCount             Int        @default(0) @map("used_count")
+  minOrderValue         Decimal?   @map("min_order_value") @db.Decimal(10, 2)
+  restrictedProductIds  String[]   @default([]) @map("restricted_product_ids")
+  restrictedCategoryIds String[]   @default([]) @map("restricted_category_ids")
+  expiresAt             DateTime?  @map("expires_at")
+  isActive              Boolean    @default(true) @map("is_active")
+  createdAt             DateTime   @default(now()) @map("created_at")
+
+  redemptions CouponRedemption[]
+  orders      Order[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("coupons")
+}
+
+// Backs FR-CP-02's per-customer usage limit (count rows for this
+// couponId+customerId) and doubles as an audit trail. Coupon.usedCount is
+// the fast total-usage check; this table is the precise, queryable ledger.
+model CouponRedemption {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  couponId String @map("coupon_id")
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([couponId])
+  @@index([customerId])
+  @@map("coupon_redemptions")
+}
+
+model ShippingZone {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name      String
+  regions   Json     @default("[]") // e.g. ["US", "CA-BC"] — country/state codes
+  createdAt DateTime @default(now()) @map("created_at")
+
+  rates ShippingRate[]
+
+  @@index([tenantId])
+  @@map("shipping_zones")
+}
+
+// Flat-rate + free-above-threshold only for Phase 3 — FR-S-02's weight-based
+// option is scoped out (no weight column exists on Product/ProductVariant
+// yet, and it isn't in this phase's exit criteria; add it if/when a real
+// need arises rather than speculatively now).
+enum ShippingRateType {
+  flat_rate
+  free_above_threshold
+}
+
+model ShippingRate {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  shippingZoneId String       @map("shipping_zone_id")
+  shippingZone   ShippingZone @relation(fields: [shippingZoneId], references: [id], onDelete: Cascade)
+
+  name            String
+  type            ShippingRateType
+  amount          Decimal          @db.Decimal(10, 2)
+  freeAboveAmount Decimal?         @map("free_above_amount") @db.Decimal(10, 2)
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([shippingZoneId])
+  @@map("shipping_rates")
+}
+
+model TaxRule {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  region     String
+  rate       Decimal   @db.Decimal(5, 2) // percentage, e.g. 8.25
+  categoryId String?   @map("category_id") // optional restriction to one category (FR-S-03)
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("tax_rules")
+}
+
+// FR-O-06's status list, verbatim.
+enum OrderStatus {
+  pending
+  paid
+  fulfilled
+  shipped
+  delivered
+  cancelled
+  refunded
+}
+
+model Order {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  status        OrderStatus @default(pending)
+  subtotal      Decimal     @db.Decimal(10, 2)
+  taxTotal      Decimal     @default(0) @map("tax_total") @db.Decimal(10, 2)
+  shippingTotal Decimal     @default(0) @map("shipping_total") @db.Decimal(10, 2)
+  discountTotal Decimal     @default(0) @map("discount_total") @db.Decimal(10, 2)
+  grandTotal    Decimal     @map("grand_total") @db.Decimal(10, 2)
+
+  couponId String? @map("coupon_id")
+  coupon   Coupon? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  // Snapshotted directly onto the order, not an FK to CustomerAddress (which
+  // could be edited/deleted later) — same "historical accuracy" reasoning
+  // as OrderItem's productName/sku/unitPrice snapshot below.
+  shippingLine1      String  @map("shipping_line1")
+  shippingLine2      String? @map("shipping_line2")
+  shippingCity       String  @map("shipping_city")
+  shippingState      String? @map("shipping_state")
+  shippingPostalCode String? @map("shipping_postal_code")
+  shippingCountry    String  @map("shipping_country")
+
+  trackingNumber     String? @map("tracking_number")
+  fulfillmentCarrier String? @map("fulfillment_carrier")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items               OrderItem[]
+  redemptions         CouponRedemption[]
+  paymentTransactions PaymentTransaction[]
+  refunds             Refund[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@index([customerId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id       String @id @default(uuid())
+  orderId  String @map("order_id")
+  order    Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  tenantId String @map("tenant_id")
+
+  // Nullable + SetNull (not Restrict/Cascade): deleting the underlying
+  // variant/product must never be blocked by, or silently destroy, order
+  // history — productName/sku/unitPrice below are the source of historical
+  // truth once the live FK is gone.
+  variantId String?         @map("variant_id")
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  productName String  @map("product_name")
+  sku         String
+  quantity    Int
+  unitPrice   Decimal @map("unit_price") @db.Decimal(10, 2)
+  lineTotal   Decimal @map("line_total") @db.Decimal(10, 2)
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@map("order_items")
+}
+
+enum PaymentAccountStatus {
+  not_started
+  pending
+  active
+  restricted
+}
+
+// One row per tenant, auto-created (not_started) at registration —
+// ensureDefaultPaymentAccountForTenant, same forward-compatible-stub move as
+// Phase 2's Warehouse — so the Connect-onboarding UI never has to
+// special-case "no row exists yet."
+model PaymentAccount {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  stripeAccountId  String?              @map("stripe_account_id")
+  onboardingStatus PaymentAccountStatus @default(not_started) @map("onboarding_status")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  transactions PaymentTransaction[]
+
+  @@map("payment_accounts")
+}
+
+enum PaymentTransactionStatus {
+  pending
+  succeeded
+  failed
+  refunded
+  partially_refunded
+}
+
+model PaymentTransaction {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  paymentAccountId String         @map("payment_account_id")
+  paymentAccount   PaymentAccount @relation(fields: [paymentAccountId], references: [id], onDelete: Cascade)
+
+  stripePaymentIntentId String                   @unique @map("stripe_payment_intent_id")
+  status                PaymentTransactionStatus @default(pending)
+  amount                Decimal                  @db.Decimal(10, 2)
+  applicationFeeAmount  Decimal                  @default(0) @map("application_fee_amount") @db.Decimal(10, 2)
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+
+  refunds Refund[]
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@map("payment_transactions")
+}
+
+enum RefundStatus {
+  pending
+  succeeded
+  failed
+}
+
+model Refund {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+
+  orderId String @map("order_id")
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  paymentTransactionId String             @map("payment_transaction_id")
+  paymentTransaction   PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Cascade)
+
+  stripeRefundId String?      @map("stripe_refund_id")
+  amount         Decimal      @db.Decimal(10, 2)
+  reason         String?
+  status         RefundStatus @default(pending)
+  actorUserId    String?      @map("actor_user_id")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@map("refunds")
+}
+
+// NOT RLS-protected (like Session/CustomerSession) — a webhook arrives with
+// no authenticated tenant context at all (Stripe calls this endpoint
+// directly; tenant is only resolvable AFTER looking up the payload), so it's
+// always written via PrismaService.base, never the tenant-scoped client.
+// `tenantId` stays nullable to match 04-database-erd.mermaid's own note
+// ("scoped to (nullable for platform events)") — the one exception to every
+// other Phase 2/3 commerce table's non-null tenantId.
+// @@unique([source, eventId]) IS the idempotency guarantee (FR-PM-04 /
+// NFR-AV-03): insert-or-skip on that constraint, never process twice.
+model WebhookEvent {
+  id       String  @id @default(uuid())
+  tenantId String? @map("tenant_id")
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  source    String
+  eventId   String   @map("event_id")
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([source, eventId])
+  @@map("webhook_events")
+}
+
+// ---------------------------------------------------------------------------
+// Business Features — Phase 4 (reviews). Analytics/reporting is deliberately
+// NOT modeled here — every analytics endpoint (files/06-api-specification.md
+// §13) computes on the fly from Order/OrderItem/Customer/Inventory, matching
+// 04-database-erd.mermaid's own omission of any ANALYTICS entity.
+// ---------------------------------------------------------------------------
+
+enum ReviewStatus {
+  pending // default — awaiting moderation, not publicly visible
+  approved // publicly visible via GET /products/:id/reviews
+  rejected // moderator declined a pending review — never was public
+  hidden // was approved, later taken down (e.g. after a complaint)
+}
+
+// FR-R-01 ties reviews to "purchased products" — eligibility is checked in
+// ReviewsService against Order/OrderItem at submission time (not enforced by
+// the schema itself, since OrderItem has no direct productId — see that
+// model's own comment on why it snapshots productName/sku instead).
+model Review {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  rating    Int          @db.SmallInt // 1-5 — enforced by Zod (createReviewSchema) + a DB CHECK constraint (see enable_rls_phase4 migration)
+  comment   String?
+  status    ReviewStatus @default(pending)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // One review per customer per product — no self-edit endpoint in this
+  // phase's spec; could be added later without a schema change.
+  @@unique([tenantId, productId, customerId])
+  @@index([tenantId])
+  @@index([productId, status])
+  @@map("reviews")
+}
+
+// ---------------------------------------------------------------------------
+// SaaS Features — Phase 5 (plan limits, subscriptions, invoices, usage
+// counters, tenant plan overrides, dunning). Ports files/04-database-erd.mermaid's
+// already-designed PLAN_LIMIT/SUBSCRIPTION/USAGE_COUNTER/TENANT_PLAN_OVERRIDE
+// entity stubs into real tables; INVOICE has no ERD stub and is designed
+// fresh here. `plan_limits` is the one exception to "every table here gets
+// RLS" — it belongs to a Plan, not a tenant (no tenant_id column at all,
+// same as `plans` itself).
+// ---------------------------------------------------------------------------
+
+// No RLS (see file header). metric is a plain string (not an enum) so new
+// metrics are additive, never a migration — this phase only populates
+// 'staff_seats' and 'product_count' rows; 'order_volume' is checked via
+// UsageCounter instead (see that model's comment); no row for a given
+// metric means unlimited (PlanLimitGuard's own convention).
+model PlanLimit {
+  id       String @id @default(uuid())
+  planId   String @map("plan_id")
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  metric   String
+  maxValue Int    @map("max_value")
+
+  @@unique([planId, metric])
+  @@map("plan_limits")
+}
+
+// Tenant-scoped, RLS-protected (standard policy) — even though only Super
+// Admin *writes* this (via PrismaService.base, no tenant context of its
+// own), PlanLimitGuard must *read* it through the normal tenant-scoped
+// client so a tenant transparently sees only its own override, never
+// another tenant's. grantedByUserId is a plain string, not a Prisma
+// relation — same "cross-tenant actor id doesn't need an FK" precedent as
+// Refund.actorUserId (the Super Admin's User row has tenantId: null; a
+// relation into a nullable-tenant table adds no real value here).
+model TenantPlanOverride {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric          String
+  overrideValue   Int      @map("override_value")
+  reason          String
+  grantedByUserId String?  @map("granted_by_user_id")
+  expiresAt       DateTime @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, metric])
+  @@map("tenant_plan_overrides")
+}
+
+// Tenant-scoped, RLS-protected (standard policy). One row per tenant
+// (tenantId unique) — created at registration (free plan, no real Stripe
+// customer/subscription — see ensureDefaultSubscriptionForTenant), updated
+// in place on upgrade/downgrade (StripeService#upsertSubscription).
+model Subscription {
+  id                   String    @id @default(uuid())
+  tenantId             String    @unique @map("tenant_id")
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  planId               String    @map("plan_id")
+  plan                 Plan      @relation(fields: [planId], references: [id])
+  stripeCustomerId     String?   @map("stripe_customer_id")
+  stripeSubscriptionId String?   @unique @map("stripe_subscription_id")
+  // Mirrors Stripe's own Subscription.status vocabulary directly (no
+  // home-grown enum standing in for it — same discipline as
+  // stripe.service.ts's own file comment) when a real subscription exists;
+  // 'active' for the free-plan placeholder row that has none.
+  status               String    @default("active")
+  currentPeriodEnd     DateTime? @map("current_period_end")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  invoices Invoice[]
+
+  @@map("subscriptions")
+}
+
+// Tenant-scoped, RLS-protected (standard policy). Populated EXCLUSIVELY by
+// BillingWebhookService (invoice.paid / invoice.payment_failed) — never a
+// live "list invoices" Stripe API call, matching NFR-CP-04's spirit (Stripe
+// is the source of truth for the underlying charge; this is a local,
+// fast-to-query mirror for the dashboard). "Download" is a link-out to
+// Stripe's own hosted invoice/PDF URLs — no local PDF renderer, unlike
+// Phase 4's self-built analytics reports, since Stripe already generates one.
+model Invoice {
+  id               String        @id @default(uuid())
+  tenantId         String        @map("tenant_id")
+  tenant           Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptionId   String?       @map("subscription_id")
+  subscription     Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  stripeInvoiceId  String        @unique @map("stripe_invoice_id")
+  status           String // mirrors Stripe's Invoice.status vocabulary: draft/open/paid/uncollectible/void
+  amountDue        Decimal       @map("amount_due") @db.Decimal(10, 2)
+  amountPaid       Decimal       @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  currency         String        @default("usd")
+  hostedInvoiceUrl String?       @map("hosted_invoice_url")
+  invoicePdfUrl    String?       @map("invoice_pdf_url")
+  periodStart      DateTime?     @map("period_start")
+  periodEnd        DateTime?     @map("period_end")
+  createdAt        DateTime      @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@map("invoices")
+}
+
+// Tenant-scoped, RLS-protected (standard policy). Read/written via the
+// normal tenant-scoped client inside CheckoutService — never a base client
+// — since order_volume's check+increment happens on a live, already
+// tenant-scoped request path (unlike DunningProcessor's grace-period check,
+// which is genuinely cross-tenant and uses createBasePrismaClient). Only
+// 'order_volume' uses this table this phase (staff_seats/product_count are
+// point-in-time live COUNTs, checked directly by PlanLimitGuard — no stored
+// counter needed for those, they can't drift).
+model UsageCounter {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric   String
+  period   String // e.g. "2026-08" (UTC calendar month)
+  count    Int    @default(0)
+
+  @@unique([tenantId, metric, period])
+  @@map("usage_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Advanced — Phase 6 round 1 (custom domains, outbound webhooks). Tenant-
+// scoped, RLS-protected (standard policy — all three have a non-null
+// tenant_id, same as subscriptions/invoices/usage_counters above).
+// ---------------------------------------------------------------------------
+
+// One row per custom domain a tenant has attempted to add.
+// `verificationToken` is the value the tenant is asked to publish in a DNS
+// TXT record (`_saas-verify.<domain>`) — DnsVerificationService checks for
+// it with a real `dns.promises.resolveTxt()` lookup (no stub mode, unlike
+// TLS provisioning below: DNS lookups are free/public, no cloud account
+// needed). `status` flips pending_verification -> verified only once that
+// lookup succeeds; TenantResolverGuard only resolves a tenant via a
+// `verified` row (see that guard's own comment). TLS/cert provisioning
+// (AcmService) is stub-mode in this environment (no AWS credentials) —
+// mirrors StripeService.isStubMode exactly; this table doesn't itself store
+// a certificate reference (out of scope for this round — see the Phase 6
+// plan's disclosed deferral of real ACM/Route53 automation).
+//
+// NO RLS (correction found during M38 verification — see migration
+// 20260806034500_custom_domains_no_rls's comment for the full story):
+// TenantResolverGuard must resolve which tenant owns an arbitrary Host
+// header BEFORE any tenant context exists, via the unscoped `prisma.base`
+// client — the identical bootstrap problem `Tenant`/`Plan`/`Permission`
+// solve the same way. DomainsService's own tenant-scoped CRUD queries stay
+// explicitly filtered by `tenantId` at the app layer (same category/risk
+// profile as Tenant's own isolation, which has never had RLS either).
+model CustomDomain {
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain            String    @unique
+  status            String    @default("pending_verification") // pending_verification | verified | failed
+  verificationToken String    @map("verification_token")
+  verifiedAt        DateTime? @map("verified_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("custom_domains")
+}
+
+// A tenant-configured outbound webhook endpoint. `secret` is generated at
+// creation, shown to the tenant exactly once (never re-displayed, same
+// one-time-reveal discipline convention as an API key would follow), and
+// used to HMAC-sign every delivery so the tenant's receiver can verify
+// authenticity — mirrors how Stripe signs webhooks TO us, with the sender/
+// receiver roles reversed. `eventTypes` is a plain string array (same
+// native-array convention as Coupon.restrictedProductIds) rather than a
+// join table — a fixed, small, code-defined vocabulary
+// (order.created/order.status_changed/product.created/product.updated/
+// product.deleted), not a user-managed taxonomy needing its own CRUD.
+model WebhookSubscription {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  url        String
+  secret     String
+  eventTypes String[] @map("event_types")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhook_subscriptions")
+}
+
+// One row per delivery attempt-set for one (subscription, event) pair —
+// created by WebhookDispatchService at the moment the domain event fires,
+// updated in place by apps/worker's WebhookDeliveryProcessor as BullMQ
+// retries the underlying job. `attempt` tracks how many delivery attempts
+// have been made so far (mirrors the job's own BullMQ `attemptsMade`,
+// persisted here since a completed/failed BullMQ job's data doesn't stay
+// queryable via the dashboard's delivery-log view).
+model WebhookDelivery {
+  id             String              @id @default(uuid())
+  tenantId       String              @map("tenant_id")
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  subscriptionId String              @map("subscription_id")
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  eventType      String              @map("event_type")
+  payload        Json
+  status         String              @default("pending") // pending | delivered | failed
+  responseStatus Int?                @map("response_status")
+  attempt        Int                 @default(0)
+  createdAt      DateTime            @default(now()) @map("created_at")
+  deliveredAt    DateTime?           @map("delivered_at")
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([subscriptionId])
+  @@map("webhook_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Compliance — Tenant Data Export & Scheduled Deletion (FR-AU-03,
+// NFR-CP-01/02). Tenant-scoped, RLS-protected (standard policy) — created
+// via `runScoped` in both trigger paths (a real tenant-owner self-service
+// request already has CLS populated; a Super-Admin-triggered offboard export
+// has no tenant context of its own, same "no tenant context to satisfy the
+// INSERT's WITH CHECK clause without one" reasoning as
+// TenantsService#createPlanOverride). Populated by apps/worker's
+// DataExportProcessor — `downloadUrl` is a presigned (time-limited) S3/MinIO
+// GET URL, never the public/unexpiring `getPublicUrl` product images use,
+// since this blob can contain PII.
+// ---------------------------------------------------------------------------
+model DataExportRequest {
+  id                String    @id @default(uuid())
+  tenantId          String    @map("tenant_id")
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requestedByUserId String?   @map("requested_by_user_id")
+  status            String    @default("pending") // pending | ready | failed
+  downloadUrl       String?   @map("download_url")
+  expiresAt         DateTime? @map("expires_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  readyAt           DateTime? @map("ready_at")
+
+  @@index([tenantId])
+  @@map("data_export_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Public API — API-key authentication for tenant integrations. NO RLS policy
+// (a deliberate, from-the-start design choice this time — the identical
+// bootstrap problem `CustomDomain` hit in Phase 6, learned from and applied
+// here up front): `ApiKeyGuard` must resolve a key with ZERO tenant context
+// (that's the entire point of an API key — the request carries no other
+// tenant signal at all), so `prisma.base` is the only client that can ever
+// read this table, and FORCE ROW LEVEL SECURITY would make that
+// structurally impossible (see `CustomDomain`'s own schema comment for the
+// full story). Isolation for this table's own management CRUD
+// (`ApiKeysService`) is app-layer instead — explicit `where: { tenantId, id
+// }` on every query, same category/risk profile as `Tenant`'s own
+// isolation.
+//
+// A key authenticates AS the `User` it's tied to (`userId`) — it inherits
+// that user's real, live `UserRole`→`Role`→`RolePermission` grants via the
+// exact same `resolveGrantedPermissions` lookup a JWT-authenticated request
+// already goes through (see `ApiKeyGuard`'s own comment) — no separate
+// permission-scoping model exists for keys themselves this round, disclosed
+// in this feature's plan.
+model ApiKey {
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  // SHA-256 of the full raw key — these are high-entropy random tokens, not
+  // user-chosen passwords, so a slow KDF (bcrypt/argon2) is unnecessary,
+  // same discipline as GitHub/Stripe's own API-token hashing.
+  keyHash    String    @unique @map("key_hash")
+  // Last 4 characters of the raw key, for display only (e.g. "…ab12") — the
+  // full key is shown exactly once at creation and never stored in plain
+  // form anywhere.
+  keyPreview String    @map("key_preview")
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("api_keys")
+}

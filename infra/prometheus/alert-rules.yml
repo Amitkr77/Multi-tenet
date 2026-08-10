@@ -1,0 +1,21 @@
+# NFR-O-03's generic, feature-agnostic case only — elevated HTTP 5xx rate.
+# The failed-payment and cert-renewal-failure alerts NFR-O-03 also names
+# don't apply yet: no payment integration exists until Phase 3, no custom
+# domains/certs until Phase 6. Add those alongside the features themselves,
+# not speculatively here.
+groups:
+  - name: api-alerts
+    rules:
+      - alert: HighHttpErrorRate
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_count{status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_request_duration_seconds_count[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elevated HTTP 5xx rate (>5% over 5m)"
+          description: "More than 5% of requests have returned a 5xx status over the last 5 minutes."

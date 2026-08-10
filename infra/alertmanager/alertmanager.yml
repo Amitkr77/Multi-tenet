@@ -1,0 +1,14 @@
+# Dev proof-of-pipeline only. This `webhook_configs` receiver points nowhere
+# useful in production — no on-call destination (PagerDuty/Slack/email) or
+# secrets management exists yet. It exists so `HighHttpErrorRate` firing
+# actually shows up in Alertmanager's UI (http://localhost:9093) as proof the
+# Prometheus -> Alertmanager pipeline works end-to-end. Wire a real receiver
+# when there's an actual on-call destination to send to.
+route:
+  receiver: dev-null
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 3h
+
+receivers:
+  - name: dev-null

@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  PNPM_VERSION: "11.13.1"
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # lint / test / build — no DB/Redis needed (unit tests + Nest/Next builds
+  # only; app.controller.spec.ts doesn't import AppModule, so it never
+  # touches PrismaService/guards).
+  # ---------------------------------------------------------------------
+  verify:
+    name: Lint, unit test, build
+    runs-on: ubuntu-latest
+    env:
+      # Never connected to — just satisfies `prisma generate`'s schema
+      # validation, which runs automatically on every `pnpm install` via
+      # packages/database's postinstall hook. No DB is needed for lint/unit
+      # test/build (unit tests don't import AppModule; builds are static).
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/saas_platform?schema=public"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache turbo
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ github.job }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ github.job }}-
+
+      - name: Lint
+        run: pnpm turbo run lint
+
+      - name: Unit test
+        run: pnpm turbo run test
+
+      - name: Build
+        run: pnpm turbo run build
+
+  # ---------------------------------------------------------------------
+  # Required check — arch.md §4 / 08-development-roadmap.md's Phase 1 exit
+  # criteria: cross-tenant isolation proven automatically, on every PR.
+  # Only Postgres + Redis are needed (Mailhog/MinIO are dev-only
+  # conveniences apps/worker and apps/web use locally — this suite never
+  # starts apps/worker, so email jobs just sit unprocessed in the queue,
+  # which is fine; enqueueing them is all AuthService needs Redis for here).
+  # ---------------------------------------------------------------------
+  tenant-isolation:
+    name: Tenant isolation (required)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: saas_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/saas_platform?schema=public"
+      # Must match the enable_rls migration's hardcoded dev password (same
+      # placeholder used in every .env.example in this repo) — the migration
+      # both creates this role and grants it, so CI needs no separate setup.
+      DATABASE_URL_APP: "postgresql://app_user:change_me_in_env@localhost:5432/saas_platform?schema=public"
+      REDIS_HOST: "localhost"
+      REDIS_PORT: "6379"
+      APP_BASE_DOMAIN: "yourapp.local"
+      WEB_APP_URL: "http://localhost:3000"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages (api depends on @saas/database, @saas/shared-types)
+        run: pnpm turbo run build --filter=@saas/api...
+
+      - name: Apply migrations (schema + RLS policies)
+        working-directory: packages/database
+        run: pnpm exec prisma migrate deploy
+
+      - name: Run tenant-isolation e2e suite
+        working-directory: apps/api
+        run: pnpm test:e2e
