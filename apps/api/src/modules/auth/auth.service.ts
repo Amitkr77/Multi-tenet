@@ -652,7 +652,7 @@ export class AuthService {
     );
 
     return {
-      user: { id: user.id, email: user.email, isActive: user.isActive },
+      user: { id: user.id, email: user.email, isActive: user.isActive, twoFactorEnabled: user.twoFactorEnabled },
       tenant: tenant
         ? {
             id: tenant.id,

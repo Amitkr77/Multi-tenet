@@ -16,7 +16,7 @@ export default function SecuritySettingsPage() {
   const [code, setCode] = useState("");
   const [done, setDone] = useState<"enabled" | "disabled" | null>(null);
 
-  const twoFactorEnabled = (me.data?.user as any)?.twoFactorEnabled ?? false;
+  const twoFactorEnabled = me.data?.user.twoFactorEnabled ?? false;
 
   const handleStartSetup = () => {
     setup2fa.mutate(undefined, {

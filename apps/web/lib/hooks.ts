@@ -97,13 +97,8 @@ export function useDisable2fa() {
 }
 
 export function useCompleteTwoFactorLogin() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (dto: CompleteTwoFactorLoginDto) =>
       apiFetch<{ tokens: AuthTokens } & MeResponse>("/auth/2fa/login", { method: "POST", body: dto, skipAuthRetry: true }),
-    onSuccess: (data) => {
-      import("./auth").then(({ setAccessToken }) => setAccessToken(data.tokens.accessToken));
-      queryClient.invalidateQueries({ queryKey: ["me"] });
-    },
   });
 }

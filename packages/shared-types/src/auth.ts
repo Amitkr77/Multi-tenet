@@ -94,6 +94,7 @@ export const meResponseSchema = z.object({
     id: z.string().uuid(),
     email: z.string().email(),
     isActive: z.boolean(),
+    twoFactorEnabled: z.boolean(),
   }),
   tenant: z
     .object({
