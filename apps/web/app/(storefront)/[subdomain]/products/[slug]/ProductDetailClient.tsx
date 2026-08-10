@@ -7,7 +7,9 @@ import {
   useAddCartItem,
   useStorefrontProductReviews,
   useSubmitReview,
+  useStorefrontTenant,
 } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 import { ApiError } from "@/lib/api-client";
 
@@ -109,6 +111,8 @@ export default function ProductDetailClient() {
   const { subdomain, slug } = useParams<{ subdomain: string; slug: string }>();
   const router = useRouter();
   const product = useStorefrontProduct(subdomain, slug);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
   const addItem = useAddCartItem(subdomain);
   const [addedVariantId, setAddedVariantId] = useState<string | null>(null);
 
@@ -148,7 +152,7 @@ export default function ProductDetailClient() {
         </div>
         <div className="space-y-4">
           <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">{p.name}</h1>
-          <p className="text-xl text-zinc-700 dark:text-zinc-300">${Number(p.basePrice).toFixed(2)}</p>
+          <p className="text-xl text-zinc-700 dark:text-zinc-300">{formatMoney(Number(p.basePrice), currency)}</p>
           {p.description && <p className="text-sm text-zinc-600 dark:text-zinc-400">{p.description}</p>}
           {p.variants.length > 0 && (
             <div className="space-y-2">

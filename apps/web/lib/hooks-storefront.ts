@@ -15,6 +15,14 @@ import type {
 import { storefrontFetch } from "./storefront-api-client";
 import { setCustomerAccessToken, clearCustomerAccessToken } from "./customer-auth";
 
+export function useStorefrontTenant(subdomain: string) {
+  return useQuery({
+    queryKey: ["storefront-tenant", subdomain],
+    queryFn: () => storefrontFetch<{ name: string; currency: string }>(subdomain, "/storefront/info"),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
 export function useStorefrontProducts(subdomain: string, params?: { search?: string; categoryId?: string }) {
   return useQuery({
     queryKey: ["storefront-products", subdomain, params],

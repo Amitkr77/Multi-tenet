@@ -10,6 +10,7 @@ import { AttributesService } from './attributes.service';
 import { ProductsController } from './products.controller';
 import { StorefrontProductsController } from './storefront-products.controller';
 import { StorefrontCategoriesController } from './storefront-categories.controller';
+import { StorefrontInfoController } from './storefront-info.controller';
 import { ProductsService } from './products.service';
 
 @Module({
@@ -21,6 +22,7 @@ import { ProductsService } from './products.service';
     ProductsController,
     StorefrontProductsController,
     StorefrontCategoriesController,
+    StorefrontInfoController,
   ],
   providers: [
     CategoriesService,

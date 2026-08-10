@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { shippingAddressInputSchema, type ShippingAddressInput } from "@saas/shared-types";
-import { useCart, useCheckoutQuote, useCheckoutComplete } from "@/lib/hooks-storefront";
+import { useCart, useCheckoutQuote, useCheckoutComplete, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 import { ApiError } from "@/lib/api-client";
 
@@ -14,6 +15,8 @@ export default function CheckoutPage() {
   const router = useRouter();
   const hasToken = typeof window !== "undefined" && !!getCustomerAccessToken();
   const cart = useCart(subdomain, hasToken);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
   const quote = useCheckoutQuote(subdomain);
   const complete = useCheckoutComplete(subdomain);
   const [couponCode, setCouponCode] = useState("");
@@ -103,25 +106,25 @@ export default function CheckoutPage() {
         <div className="mt-6 space-y-2 rounded-lg border border-zinc-200 p-4 text-sm dark:border-zinc-800">
           <div className="flex justify-between">
             <span className="text-zinc-500">Subtotal</span>
-            <span>${quote.data.subtotal.toFixed(2)}</span>
+            <span>{formatMoney(quote.data.subtotal, currency)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-zinc-500">Shipping</span>
-            <span>${quote.data.shippingTotal.toFixed(2)}</span>
+            <span>{formatMoney(quote.data.shippingTotal, currency)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-zinc-500">Tax</span>
-            <span>${quote.data.taxTotal.toFixed(2)}</span>
+            <span>{formatMoney(quote.data.taxTotal, currency)}</span>
           </div>
           {quote.data.discountTotal > 0 && (
             <div className="flex justify-between text-brand-600">
               <span>Discount</span>
-              <span>-${quote.data.discountTotal.toFixed(2)}</span>
+              <span>-{formatMoney(quote.data.discountTotal, currency)}</span>
             </div>
           )}
           <div className="flex justify-between border-t border-zinc-200 pt-2 font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-50">
             <span>Total</span>
-            <span>${quote.data.grandTotal.toFixed(2)}</span>
+            <span>{formatMoney(quote.data.grandTotal, currency)}</span>
           </div>
 
           <button

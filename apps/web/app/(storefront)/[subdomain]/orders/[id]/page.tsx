@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useMyOrder } from "@/lib/hooks-storefront";
+import { useMyOrder, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 
 export default function MyOrderDetailPage() {
@@ -10,6 +11,8 @@ export default function MyOrderDetailPage() {
   const router = useRouter();
   const hasToken = typeof window !== "undefined" && !!getCustomerAccessToken();
   const order = useMyOrder(subdomain, id, hasToken);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
 
   useEffect(() => {
     if (!hasToken) router.replace(`/${subdomain}/login`);
@@ -33,7 +36,7 @@ export default function MyOrderDetailPage() {
             <span>
               {item.productName} <span className="text-zinc-500">× {item.quantity}</span>
             </span>
-            <span>${Number(item.lineTotal).toFixed(2)}</span>
+            <span>{formatMoney(Number(item.lineTotal), currency)}</span>
           </li>
         ))}
       </ul>
@@ -41,25 +44,25 @@ export default function MyOrderDetailPage() {
       <div className="space-y-1 border-t border-zinc-200 pt-4 text-sm dark:border-zinc-800">
         <div className="flex justify-between">
           <span className="text-zinc-500">Subtotal</span>
-          <span>${Number(o.subtotal).toFixed(2)}</span>
+          <span>{formatMoney(Number(o.subtotal), currency)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-zinc-500">Shipping</span>
-          <span>${Number(o.shippingTotal).toFixed(2)}</span>
+          <span>{formatMoney(Number(o.shippingTotal), currency)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-zinc-500">Tax</span>
-          <span>${Number(o.taxTotal).toFixed(2)}</span>
+          <span>{formatMoney(Number(o.taxTotal), currency)}</span>
         </div>
         {Number(o.discountTotal) > 0 && (
           <div className="flex justify-between text-brand-600">
             <span>Discount</span>
-            <span>-${Number(o.discountTotal).toFixed(2)}</span>
+            <span>-{formatMoney(Number(o.discountTotal), currency)}</span>
           </div>
         )}
         <div className="flex justify-between border-t border-zinc-200 pt-2 font-semibold text-zinc-900 dark:border-zinc-800 dark:text-zinc-50">
           <span>Total</span>
-          <span>${Number(o.grandTotal).toFixed(2)}</span>
+          <span>{formatMoney(Number(o.grandTotal), currency)}</span>
         </div>
       </div>
 

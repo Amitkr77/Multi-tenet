@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useShippingZones, useCreateShippingZone, useAddShippingRate } from "@/lib/hooks-catalog";
+import { useShippingZones, useCreateShippingZone, useAddShippingRate, useTenantProfile } from "@/lib/hooks-catalog";
+import { formatMoney } from "@/lib/format-currency";
 import { ApiError } from "@/lib/api-client";
 
 export default function ShippingPage() {
   const zones = useShippingZones();
+  const profile = useTenantProfile();
+  const currency = (profile.data?.currency ?? "usd").toUpperCase();
   const createZone = useCreateShippingZone();
   const addRate = useAddShippingRate();
 
@@ -60,7 +63,7 @@ export default function ShippingPage() {
                 <ul className="mt-1 space-y-0.5 text-xs text-zinc-500">
                   {z.rates.map((r: any) => (
                     <li key={r.id}>
-                      {r.name}: {r.type === "flat_rate" ? `$${Number(r.amount).toFixed(2)}` : `Free above $${Number(r.freeAboveAmount).toFixed(2)}`}
+                      {r.name}: {r.type === "flat_rate" ? formatMoney(Number(r.amount), currency) : `Free above ${formatMoney(Number(r.freeAboveAmount), currency)}`}
                     </li>
                   ))}
                 </ul>

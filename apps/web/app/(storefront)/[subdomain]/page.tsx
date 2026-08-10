@@ -2,12 +2,15 @@
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useStorefrontProducts } from "@/lib/hooks-storefront";
+import { useStorefrontProducts, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { ApiError } from "@/lib/api-client";
 
 export default function StorefrontHomePage() {
   const { subdomain } = useParams<{ subdomain: string }>();
   const products = useStorefrontProducts(subdomain);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
 
   if (products.isLoading) return <p className="p-8 text-sm text-zinc-500">Loading…</p>;
   if (products.isError) {
@@ -41,7 +44,7 @@ export default function StorefrontHomePage() {
             )}
             <div className="p-4">
               <p className="font-medium text-zinc-900 dark:text-zinc-50">{p.name}</p>
-              <p className="text-sm text-zinc-500">${Number(p.basePrice).toFixed(2)}</p>
+              <p className="text-sm text-zinc-500">{formatMoney(Number(p.basePrice), currency)}</p>
             </div>
           </Link>
         ))}

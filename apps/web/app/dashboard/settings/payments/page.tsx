@@ -1,12 +1,15 @@
 "use client";
 
-import { usePaymentAccountStatus, useStartOnboarding, usePayouts } from "@/lib/hooks-catalog";
+import { usePaymentAccountStatus, useStartOnboarding, usePayouts, useTenantProfile } from "@/lib/hooks-catalog";
+import { formatMoney } from "@/lib/format-currency";
 import { ApiError } from "@/lib/api-client";
 
 export default function PaymentsSettingsPage() {
   const status = usePaymentAccountStatus();
   const onboard = useStartOnboarding();
   const payouts = usePayouts();
+  const profile = useTenantProfile();
+  const currency = (profile.data?.currency ?? "usd").toUpperCase();
 
   if (status.isLoading) return <p className="text-sm text-zinc-500">Loading…</p>;
 
@@ -60,7 +63,7 @@ export default function PaymentsSettingsPage() {
               {payouts.data?.map((t: any) => (
                 <tr key={t.id}>
                   <td className="py-1.5">#{t.orderId.slice(0, 8)}</td>
-                  <td className="py-1.5">${Number(t.amount).toFixed(2)}</td>
+                  <td className="py-1.5">{formatMoney(Number(t.amount), currency)}</td>
                   <td className="py-1.5 capitalize">{t.status}</td>
                 </tr>
               ))}

@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useStorefrontProducts, useStorefrontCategories } from "@/lib/hooks-storefront";
+import { useStorefrontProducts, useStorefrontCategories, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 
 export default function StorefrontProductsPage() {
   const { subdomain } = useParams<{ subdomain: string }>();
@@ -19,6 +20,8 @@ export default function StorefrontProductsPage() {
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [search]);
 
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
   const categories = useStorefrontCategories(subdomain);
   const products = useStorefrontProducts(subdomain, {
     search: debouncedSearch || undefined,
@@ -79,7 +82,7 @@ export default function StorefrontProductsPage() {
             <div className="p-4">
               <p className="font-medium text-zinc-900 dark:text-zinc-50">{p.name}</p>
               {p.category && <p className="text-xs text-zinc-400">{p.category.name}</p>}
-              <p className="mt-1 text-sm text-zinc-500">${Number(p.basePrice).toFixed(2)}</p>
+              <p className="mt-1 text-sm text-zinc-500">{formatMoney(Number(p.basePrice), currency)}</p>
             </div>
           </Link>
         ))}

@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useMyOrders } from "@/lib/hooks-storefront";
+import { useMyOrders, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 
 export default function MyOrdersPage() {
@@ -11,6 +12,8 @@ export default function MyOrdersPage() {
   const router = useRouter();
   const hasToken = typeof window !== "undefined" && !!getCustomerAccessToken();
   const orders = useMyOrders(subdomain, hasToken);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
 
   useEffect(() => {
     if (!hasToken) router.replace(`/${subdomain}/login`);
@@ -30,7 +33,7 @@ export default function MyOrdersPage() {
               <Link href={`/${subdomain}/orders/${order.id}`} className="flex items-center justify-between text-sm">
                 <span className="text-zinc-900 dark:text-zinc-50">Order #{order.id.slice(0, 8)}</span>
                 <span className="capitalize text-zinc-500">{order.status}</span>
-                <span className="font-medium text-zinc-900 dark:text-zinc-50">${Number(order.grandTotal).toFixed(2)}</span>
+                <span className="font-medium text-zinc-900 dark:text-zinc-50">{formatMoney(Number(order.grandTotal), currency)}</span>
               </Link>
             </li>
           ))}

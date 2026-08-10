@@ -3,7 +3,8 @@
 import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useCart, useUpdateCartItem, useRemoveCartItem } from "@/lib/hooks-storefront";
+import { useCart, useUpdateCartItem, useRemoveCartItem, useStorefrontTenant } from "@/lib/hooks-storefront";
+import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 
 function effectivePrice(item: any): number {
@@ -15,6 +16,8 @@ export default function CartPage() {
   const router = useRouter();
   const hasToken = typeof window !== "undefined" && !!getCustomerAccessToken();
   const cart = useCart(subdomain, hasToken);
+  const tenant = useStorefrontTenant(subdomain);
+  const currency = tenant.data?.currency ?? "USD";
   const updateItem = useUpdateCartItem(subdomain);
   const removeItem = useRemoveCartItem(subdomain);
 
@@ -41,7 +44,7 @@ export default function CartPage() {
               <li key={item.id} className="flex items-center justify-between gap-4 py-4">
                 <div className="flex-1">
                   <p className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{item.variant.product.name}</p>
-                  <p className="text-xs text-zinc-500">{item.variant.sku} · ${effectivePrice(item).toFixed(2)} each</p>
+                  <p className="text-xs text-zinc-500">{item.variant.sku} · {formatMoney(effectivePrice(item), currency)} each</p>
                 </div>
                 <input
                   type="number"
@@ -54,7 +57,7 @@ export default function CartPage() {
                   className="input w-16 text-center"
                 />
                 <p className="w-20 text-right text-sm text-zinc-700 dark:text-zinc-300">
-                  ${(effectivePrice(item) * item.quantity).toFixed(2)}
+                  {formatMoney(effectivePrice(item) * item.quantity, currency)}
                 </p>
                 <button
                   onClick={() => removeItem.mutate(item.id)}
@@ -67,7 +70,7 @@ export default function CartPage() {
           </ul>
           <div className="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-800">
             <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Subtotal</p>
-            <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">${subtotal.toFixed(2)}</p>
+            <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">{formatMoney(subtotal, currency)}</p>
           </div>
           <Link
             href={`/${subdomain}/checkout`}
