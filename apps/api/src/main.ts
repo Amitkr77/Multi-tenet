@@ -6,8 +6,10 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { buildSwaggerConfig } from './swagger-config';
+import { validateApiEnvironment } from './config/validate-environment';
 
 async function bootstrap() {
+  validateApiEnvironment();
   // bufferLogs holds Nest's early bootstrap logs until useLogger below swaps
   // in the pino-backed logger, so nothing gets lost or double-formatted.
   // rawBody: true populates `req.rawBody` on every request (alongside the

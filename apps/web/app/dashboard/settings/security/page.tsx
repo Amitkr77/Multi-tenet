@@ -1,15 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMe } from "@/lib/hooks";
-import { useSetup2fa, useEnable2fa, useDisable2fa } from "@/lib/hooks";
+import { useSetup2fa, useEnable2fa, useDisable2fa, useSessions, useRevokeSession, useLogoutAll } from "@/lib/hooks";
 import { ApiError } from "@/lib/api-client";
 
 export default function SecuritySettingsPage() {
+  const router = useRouter();
   const me = useMe();
   const setup2fa = useSetup2fa();
   const enable2fa = useEnable2fa();
   const disable2fa = useDisable2fa();
+  const sessions = useSessions();
+  const revokeSession = useRevokeSession();
+  const logoutAll = useLogoutAll();
 
   const [step, setStep] = useState<"idle" | "setup" | "disable">("idle");
   const [setupData, setSetupData] = useState<{ secret: string; otpauthUrl: string } | null>(null);
@@ -211,6 +216,36 @@ export default function SecuritySettingsPage() {
               </button>
             </div>
           </form>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Active sessions</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">Revoke devices you no longer recognize. Revoking this browser will take effect when its access token expires.</p>
+          </div>
+          <button
+            onClick={() => logoutAll.mutate(undefined, { onSettled: () => router.replace("/login") })}
+            disabled={logoutAll.isPending}
+            className="shrink-0 rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50 dark:border-red-900 dark:text-red-300"
+          >
+            {logoutAll.isPending ? "Signing out…" : "Log out all devices"}
+          </button>
+        </div>
+        {sessions.isLoading ? <p className="text-sm text-zinc-500">Loading sessions…</p> : (
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+            {sessions.data?.map((session) => (
+              <div key={session.id} className="flex items-center justify-between gap-4 py-3 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate text-zinc-800 dark:text-zinc-200">{session.userAgent || "Unknown browser"}</p>
+                  <p className="text-xs text-zinc-500">{session.ipAddress || "Unknown IP"} · created {new Date(session.createdAt).toLocaleString()}</p>
+                </div>
+                <button onClick={() => revokeSession.mutate(session.id)} disabled={revokeSession.isPending} className="text-xs text-red-600 hover:underline disabled:opacity-50">Revoke</button>
+              </div>
+            ))}
+            {sessions.data?.length === 0 && <p className="py-3 text-sm text-zinc-500">No active sessions.</p>}
+          </div>
         )}
       </section>
     </div>

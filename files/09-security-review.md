@@ -2,6 +2,17 @@
 
 ## Multi-Tenant SaaS Commerce Platform
 
+> **2026-08-13 update:** This is a point-in-time Phase 6 audit, not a statement
+> about the current tree. TOTP 2FA has since been fully implemented, so the
+> later claim that its routes are inert 501 stubs is obsolete. Production
+> startup now rejects development JWT, customer-JWT, TOTP, database, and
+> storage credentials. A focused follow-up also identified outbound webhook
+> destination validation as unresolved: arbitrary URLs permit server-side
+> requests to private/link-local services and DNS-rebinding targets. Treat
+> webhook SSRF protection as a launch blocker: enforce HTTPS, resolve and
+> reject non-public IP ranges on every attempt, and pin the validated address
+> through connection establishment before enabling untrusted tenant webhooks.
+
 **Performed:** 2026-08-06, against the codebase as of the end of Phase 6 (custom domains, outbound webhooks, and the Public API/API-key tier all complete). Closes the "Security review (RBAC coverage, RLS policy audit)" row of `08-development-roadmap.md`'s Cross-Cutting Milestones table.
 
 **Method:** every finding below was checked two ways — a source-level read of every table's RLS status and every controller's guard/permission coverage, then, wherever the code-level conclusion was anything less than obvious, a live empirical test (real HTTP requests against a running dev instance, or a direct `psql` query) to confirm it rather than trust the read. Nothing here is a "should be fine" claim.

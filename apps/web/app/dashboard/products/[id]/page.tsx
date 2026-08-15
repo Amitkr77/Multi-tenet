@@ -13,11 +13,14 @@ import {
 } from "@/lib/hooks-catalog";
 import { formatMoney } from "@/lib/format-currency";
 import { ApiError } from "@/lib/api-client";
+import { useMe } from "@/lib/hooks";
 
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const product = useProduct(id);
+  const me = useMe();
+  const canManage = me.data?.permissions.includes("products.manage") ?? false;
   const updateProduct = useUpdateProduct();
   const uploadImage = useUploadProductImage();
   const addVariant = useAddVariant();
@@ -106,11 +109,11 @@ export default function ProductDetailPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Name</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} className="input" required />
+              <input value={name} onChange={(e) => setName(e.target.value)} className="input" required disabled={!canManage} />
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Slug</label>
-              <input value={slug} onChange={(e) => setSlug(e.target.value)} className="input" />
+              <input value={slug} onChange={(e) => setSlug(e.target.value)} className="input" disabled={!canManage} />
             </div>
           </div>
 
@@ -121,6 +124,7 @@ export default function ProductDetailPage() {
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
               className="input"
+              disabled={!canManage}
             />
           </div>
 
@@ -134,6 +138,7 @@ export default function ProductDetailPage() {
                 value={basePrice}
                 onChange={(e) => setBasePrice(e.target.value)}
                 className="input"
+                disabled={!canManage}
               />
             </div>
             <div>
@@ -142,6 +147,7 @@ export default function ProductDetailPage() {
                 value={status}
                 onChange={(e) => setStatus(e.target.value as "draft" | "published")}
                 className="input"
+                disabled={!canManage}
               >
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
@@ -152,7 +158,7 @@ export default function ProductDetailPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Category</label>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input" disabled={!canManage}>
                 <option value="">— none —</option>
                 {categories.data?.map((c: any) => (
                   <option key={c.id} value={c.id}>{c.name}</option>
@@ -161,7 +167,7 @@ export default function ProductDetailPage() {
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Brand</label>
-              <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="input">
+              <select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="input" disabled={!canManage}>
                 <option value="">— none —</option>
                 {brands.data?.map((b: any) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
@@ -174,13 +180,13 @@ export default function ProductDetailPage() {
           {saved && <p className="text-sm text-green-700 dark:text-green-400">Saved.</p>}
 
           <div className="flex items-center gap-3">
-            <button
+            {canManage && <button
               type="submit"
               disabled={updateProduct.isPending}
               className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
             >
               {updateProduct.isPending ? "Saving…" : "Save changes"}
-            </button>
+            </button>}
             <span className="text-sm text-zinc-500">
               Currently {formatMoney(Number(p.basePrice), currency)} · {p.status}
             </span>
@@ -202,7 +208,7 @@ export default function ProductDetailPage() {
             />
           ))}
         </div>
-        <input ref={fileInputRef} type="file" accept="image/*" onChange={onFileChange} className="text-sm" />
+        {canManage && <input ref={fileInputRef} type="file" accept="image/*" onChange={onFileChange} className="text-sm" />}
         {uploadImage.isPending && <p className="text-xs text-zinc-500">Uploading…</p>}
       </section>
 
@@ -234,7 +240,7 @@ export default function ProductDetailPage() {
           </tbody>
         </table>
 
-        <form onSubmit={onAddVariant} className="flex items-end gap-2">
+        {canManage && <form onSubmit={onAddVariant} className="flex items-end gap-2">
           <label className="block space-y-1">
             <span className="text-xs text-zinc-500">New SKU</span>
             <input value={newSku} onChange={(e) => setNewSku(e.target.value)} className="input" required />
@@ -255,7 +261,7 @@ export default function ProductDetailPage() {
           >
             Add variant
           </button>
-        </form>
+        </form>}
       </section>
     </div>
   );

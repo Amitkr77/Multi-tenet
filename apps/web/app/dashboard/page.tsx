@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMe } from "@/lib/hooks";
 import { useProducts, useTenantProfile, useWarehouses, useShippingZones } from "@/lib/hooks-catalog";
+import { hasAnyPermission } from "@/lib/permissions";
 
 interface ChecklistItem {
   id: string;
@@ -29,10 +30,13 @@ function CheckIcon({ done }: { done: boolean }) {
 
 export default function DashboardHomePage() {
   const me = useMe();
-  const profile = useTenantProfile();
-  const products = useProducts();
-  const warehouses = useWarehouses();
-  const shipping = useShippingZones();
+  const permissions = me.data?.permissions;
+  const canOnboard = ["settings.manage", "products.manage", "inventory.manage_alerts", "shipping.manage"]
+    .every((permission) => permissions?.includes(permission));
+  const profile = useTenantProfile(canOnboard);
+  const products = useProducts(canOnboard);
+  const warehouses = useWarehouses(canOnboard);
+  const shipping = useShippingZones(canOnboard);
 
   const tenant = me.data?.tenant;
   const isLoading = profile.isLoading || products.isLoading || warehouses.isLoading || shipping.isLoading;
@@ -100,7 +104,7 @@ export default function DashboardHomePage() {
       </div>
 
       {/* Onboarding checklist */}
-      {!isLoading && !allDone && (
+      {canOnboard && !isLoading && !allDone && (
         <section className="rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
@@ -145,7 +149,7 @@ export default function DashboardHomePage() {
         </section>
       )}
 
-      {allDone && !isLoading && (
+      {canOnboard && allDone && !isLoading && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-200">
           Your store is fully set up. Everything looks good!
         </div>
@@ -156,13 +160,13 @@ export default function DashboardHomePage() {
         <h2 className="mb-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">Quick links</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {[
-            { label: "Products", href: "/dashboard/products" },
-            { label: "Orders", href: "/dashboard/orders" },
-            { label: "Customers", href: "/dashboard/customers" },
-            { label: "Coupons", href: "/dashboard/coupons" },
-            { label: "Analytics", href: "/dashboard/analytics" },
-            { label: "Audit Log", href: "/dashboard/audit-log" },
-          ].map((link) => (
+            { label: "Products", href: "/dashboard/products", permissions: ["products.view", "products.manage"] },
+            { label: "Orders", href: "/dashboard/orders", permissions: ["orders.view"] },
+            { label: "Customers", href: "/dashboard/customers", permissions: ["customers.view", "customers.manage"] },
+            { label: "Coupons", href: "/dashboard/coupons", permissions: ["coupons.manage"] },
+            { label: "Analytics", href: "/dashboard/analytics", permissions: ["analytics.view"] },
+            { label: "Audit Log", href: "/dashboard/audit-log", permissions: ["audit_log.view"] },
+          ].filter((link) => hasAnyPermission(permissions, link.permissions)).map((link) => (
             <Link
               key={link.href}
               href={link.href}

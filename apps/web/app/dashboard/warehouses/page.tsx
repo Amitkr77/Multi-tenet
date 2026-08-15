@@ -9,9 +9,12 @@ import {
   useDeleteWarehouse,
 } from "@/lib/hooks-catalog";
 import { ApiError } from "@/lib/api-client";
+import { useMe } from "@/lib/hooks";
 
 export default function WarehousesPage() {
   const warehouses = useWarehouses();
+  const me = useMe();
+  const canManage = me.data?.permissions.includes("inventory.manage_alerts") ?? false;
   const createWarehouse = useCreateWarehouse();
   const updateWarehouse = useUpdateWarehouse();
   const setDefault = useSetDefaultWarehouse();
@@ -141,6 +144,7 @@ export default function WarehousesPage() {
                   )}
                 </td>
                 <td className="px-4 py-2">
+                  {canManage ? (
                   <div className="flex items-center gap-3">
                     {editId !== wh.id && (
                       <button onClick={() => openEdit(wh)} className="text-xs text-brand-600 hover:underline">
@@ -162,6 +166,7 @@ export default function WarehousesPage() {
                       Delete
                     </button>
                   </div>
+                  ) : <span className="text-xs text-zinc-400">View only</span>}
                 </td>
               </tr>
             ))}
@@ -176,7 +181,7 @@ export default function WarehousesPage() {
         </table>
       </div>
 
-      <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      {canManage && <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
         <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Add warehouse</h2>
         <form onSubmit={handleCreate} className="flex items-end gap-3">
           <label className="block space-y-1">
@@ -197,7 +202,7 @@ export default function WarehousesPage() {
           </button>
         </form>
         {createError && <p className="mt-2 text-xs text-red-600">{createError}</p>}
-      </div>
+      </div>}
     </div>
   );
 }

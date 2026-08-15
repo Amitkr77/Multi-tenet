@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { RegisterDto, LoginDto, MeResponse, AuthTokens, CompleteTwoFactorLoginDto } from "@saas/shared-types";
+import type { RegisterDto, LoginDto, MeResponse, AuthTokens, CompleteTwoFactorLoginDto, AcceptInviteDto } from "@saas/shared-types";
 import { apiFetch } from "./api-client";
 import { setAccessToken, clearAccessToken } from "./auth";
 
@@ -39,6 +39,40 @@ export function useLogout() {
   });
 }
 
+export interface AccountSession {
+  id: string;
+  userAgent: string | null;
+  ipAddress: string | null;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export function useSessions() {
+  return useQuery({
+    queryKey: ["sessions"],
+    queryFn: () => apiFetch<AccountSession[]>("/auth/sessions"),
+  });
+}
+
+export function useRevokeSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<void>(`/auth/sessions/${id}`, { method: "DELETE" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+  });
+}
+
+export function useLogoutAll() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiFetch<void>("/auth/logout-all", { method: "POST", body: {} }),
+    onSettled: () => {
+      clearAccessToken();
+      queryClient.clear();
+    },
+  });
+}
+
 export function useMe(enabled = true) {
   return useQuery({
     queryKey: ["me"],
@@ -66,6 +100,17 @@ export function useVerifyEmail() {
   return useMutation({
     mutationFn: (token: string) =>
       apiFetch<void>("/auth/verify-email", { method: "POST", body: { token }, skipAuthRetry: true }),
+  });
+}
+
+export function useAcceptInvite() {
+  return useMutation({
+    mutationFn: (dto: AcceptInviteDto) =>
+      apiFetch<void>("/users/accept-invite", {
+        method: "POST",
+        body: dto,
+        skipAuthRetry: true,
+      }),
   });
 }
 

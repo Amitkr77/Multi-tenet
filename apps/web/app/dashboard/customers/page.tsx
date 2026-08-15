@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useCustomers, useUpdateCustomer } from "@/lib/hooks-catalog";
 import { ApiError } from "@/lib/api-client";
+import { useMe } from "@/lib/hooks";
 
 export default function CustomersPage() {
   const [search, setSearch] = useState("");
@@ -12,6 +13,8 @@ export default function CustomersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const customers = useCustomers(debouncedSearch || undefined);
+  const me = useMe();
+  const canManage = me.data?.permissions.includes("customers.manage") ?? false;
   const updateCustomer = useUpdateCustomer();
 
   function handleSearch(value: string) {
@@ -84,7 +87,7 @@ export default function CustomersPage() {
                 {c.firstName || c.lastName ? `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() : <span className="text-zinc-400">—</span>}
               </td>
               <td className="py-1.5">
-                {editId === c.id ? (
+                {canManage && editId === c.id ? (
                   <div className="flex items-center gap-2">
                     <input
                       value={editTags}
@@ -106,8 +109,8 @@ export default function CustomersPage() {
                   </div>
                 ) : (
                   <span
-                    className="cursor-pointer text-zinc-700 hover:text-brand-600 dark:text-zinc-300"
-                    onClick={() => openEdit(c)}
+                    className={canManage ? "cursor-pointer text-zinc-700 hover:text-brand-600 dark:text-zinc-300" : "text-zinc-700 dark:text-zinc-300"}
+                    onClick={() => canManage && openEdit(c)}
                     title="Click to edit tags"
                   >
                     {(c.tags ?? []).length > 0 ? (c.tags as string[]).join(", ") : <span className="text-zinc-400">—</span>}
@@ -117,7 +120,7 @@ export default function CustomersPage() {
               <td className="py-1.5">
                 <button
                   onClick={() => handleToggleActive(c)}
-                  disabled={updateCustomer.isPending}
+                  disabled={!canManage || updateCustomer.isPending}
                   className={`rounded px-2 py-0.5 text-xs font-medium ${
                     c.isActive
                       ? "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-950 dark:text-green-400"
@@ -129,9 +132,7 @@ export default function CustomersPage() {
               </td>
               <td className="py-1.5 text-zinc-500">{new Date(c.createdAt).toLocaleDateString()}</td>
               <td className="py-1.5">
-                <button onClick={() => openEdit(c)} className="text-xs text-brand-600 hover:underline">
-                  Edit tags
-                </button>
+                {canManage ? <button onClick={() => openEdit(c)} className="text-xs text-brand-600 hover:underline">Edit tags</button> : <span className="text-xs text-zinc-400">View only</span>}
               </td>
             </tr>
           ))}

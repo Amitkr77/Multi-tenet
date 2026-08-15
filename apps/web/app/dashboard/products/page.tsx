@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useProducts, useTenantProfile } from "@/lib/hooks-catalog";
+import { useProducts, useTenantProfile, useImportProductsCsv } from "@/lib/hooks-catalog";
 import { formatMoney } from "@/lib/format-currency";
+import { useMe } from "@/lib/hooks";
+import { downloadReport } from "@/lib/api-client";
 
 export default function ProductsListPage() {
   const products = useProducts();
+  const me = useMe();
+  const canManage = me.data?.permissions.includes("products.manage") ?? false;
+  const importCsv = useImportProductsCsv();
   const profile = useTenantProfile();
   const currency = (profile.data?.currency ?? "usd").toUpperCase();
 
@@ -13,10 +18,18 @@ export default function ProductsListPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Products</h1>
-        <Link href="/dashboard/products/new" className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
-          New product
-        </Link>
+        {canManage && <div className="flex items-center gap-2">
+          <Link href="/dashboard/catalog" className="rounded-full border border-zinc-300 px-4 py-2 text-sm">Catalog settings</Link>
+          <button onClick={() => downloadReport("/products/export", "products.csv")} className="rounded-full border border-zinc-300 px-4 py-2 text-sm">Export CSV</button>
+          <label className="cursor-pointer rounded-full border border-zinc-300 px-4 py-2 text-sm">
+            {importCsv.isPending ? "Importing…" : "Import CSV"}
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={async (event) => { const file = event.target.files?.[0]; if (file) importCsv.mutate(await file.text()); event.target.value = ""; }} />
+          </label>
+          <Link href="/dashboard/products/new" className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">New product</Link>
+        </div>}
       </div>
+
+      {importCsv.isError && <p className="text-sm text-red-600">Import failed. Check the CSV columns and values.</p>}
 
       {products.isLoading && <p className="text-sm text-zinc-500">Loading…</p>}
 

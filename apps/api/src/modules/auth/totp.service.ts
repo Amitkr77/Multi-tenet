@@ -89,17 +89,23 @@ function verifyTotp(
 // ---------------------------------------------------------------------------
 
 const ALGO = 'aes-256-gcm';
-const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 function getEncKey(): Buffer {
   const raw = process.env.TOTP_ENCRYPTION_KEY ?? '';
-  if (raw.length < KEY_BYTES) {
+  if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'TOTP_ENCRYPTION_KEY must be exactly 64 hexadecimal characters (32 bytes).',
+      );
+    }
     // Deterministic fallback for local dev — NOT safe for production.
-    return Buffer.alloc(KEY_BYTES, 'dev-totp-key-change-me', 'utf8');
+    return createHmac('sha256', 'local-development-only')
+      .update('dev-totp-key-change-me')
+      .digest();
   }
-  return Buffer.from(raw.slice(0, KEY_BYTES * 2), 'hex');
+  return Buffer.from(raw, 'hex');
 }
 
 function encrypt(plaintext: string): string {

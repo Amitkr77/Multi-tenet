@@ -3,12 +3,14 @@ import { NestFactory } from "@nestjs/core";
 import { Logger } from "nestjs-pino";
 import { QUEUE_NAMES } from "@saas/shared-types";
 import { WorkerModule } from "./worker.module";
+import { validateWorkerEnvironment } from "./validate-environment";
 
 /**
  * No HTTP listener — this process only consumes BullMQ queues.
  * `createApplicationContext` boots Nest's DI container without an HTTP server.
  */
 async function bootstrap() {
+  validateWorkerEnvironment();
   const app = await NestFactory.createApplicationContext(WorkerModule, {
     bufferLogs: true,
   });

@@ -9,6 +9,7 @@ import { useCart, useCheckoutQuote, useCheckoutComplete, useStorefrontTenant } f
 import { formatMoney } from "@/lib/format-currency";
 import { getCustomerAccessToken } from "@/lib/customer-auth";
 import { ApiError } from "@/lib/api-client";
+import { PaymentStep } from "./PaymentStep";
 
 export default function CheckoutPage() {
   const { subdomain } = useParams<{ subdomain: string }>();
@@ -20,6 +21,7 @@ export default function CheckoutPage() {
   const quote = useCheckoutQuote(subdomain);
   const complete = useCheckoutComplete(subdomain);
   const [couponCode, setCouponCode] = useState("");
+  const [payment, setPayment] = useState<{ clientSecret: string; orderId: string } | null>(null);
 
   const {
     register,
@@ -34,7 +36,7 @@ export default function CheckoutPage() {
 
   if (!hasToken || cart.isLoading) return <p className="p-8 text-sm text-zinc-500">Loading…</p>;
 
-  if ((cart.data?.items?.length ?? 0) === 0) {
+  if (!payment && (cart.data?.items?.length ?? 0) === 0) {
     return (
       <div className="p-8">
         <p className="text-sm text-zinc-500">Your cart is empty.</p>
@@ -50,9 +52,22 @@ export default function CheckoutPage() {
     const shippingAddress = getValues();
     complete.mutate(
       { shippingAddress, couponCode: couponCode || undefined },
-      { onSuccess: (result) => router.push(`/${subdomain}/orders/${result.order.id}`) },
+      { onSuccess: (result) => setPayment({ clientSecret: result.clientSecret, orderId: result.order.id }) },
     );
   };
+
+  if (payment) {
+    const returnUrl = `${window.location.origin}/${subdomain}/orders/${payment.orderId}?payment=return`;
+    return (
+      <div className="mx-auto max-w-lg space-y-6 p-8">
+        <div>
+          <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Complete payment</h1>
+          <p className="mt-1 text-sm text-zinc-500">Your order has been reserved. Payment must succeed before it can be fulfilled.</p>
+        </div>
+        <PaymentStep clientSecret={payment.clientSecret} returnUrl={returnUrl} />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-lg p-8">

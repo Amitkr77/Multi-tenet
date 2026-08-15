@@ -53,8 +53,8 @@ export function useCreateBrand() {
 
 // --- Products ---
 
-export function useProducts() {
-  return useQuery({ queryKey: ["products"], queryFn: () => apiFetch<any[]>("/products") });
+export function useProducts(enabled = true) {
+  return useQuery({ queryKey: ["products"], queryFn: () => apiFetch<any[]>("/products"), enabled });
 }
 
 export function useProduct(id: string | undefined) {
@@ -222,8 +222,8 @@ export function useDeleteCoupon() {
 
 // --- Shipping ---
 
-export function useShippingZones() {
-  return useQuery({ queryKey: ["shipping-zones"], queryFn: () => apiFetch<any[]>("/shipping-zones") });
+export function useShippingZones(enabled = true) {
+  return useQuery({ queryKey: ["shipping-zones"], queryFn: () => apiFetch<any[]>("/shipping-zones"), enabled });
 }
 
 export function useCreateShippingZone() {
@@ -259,10 +259,11 @@ export function useCreateTaxRule() {
 
 // --- Payments (Stripe Connect) ---
 
-export function usePaymentAccountStatus() {
+export function usePaymentAccountStatus(enabled = true) {
   return useQuery({
     queryKey: ["payments-connect-status"],
     queryFn: () => apiFetch<any>("/payments/connect/status"),
+    enabled,
   });
 }
 
@@ -274,14 +275,14 @@ export function useStartOnboarding() {
   });
 }
 
-export function usePayouts() {
-  return useQuery({ queryKey: ["payouts"], queryFn: () => apiFetch<any[]>("/payments/payouts") });
+export function usePayouts(enabled = true) {
+  return useQuery({ queryKey: ["payouts"], queryFn: () => apiFetch<any[]>("/payments/payouts"), enabled });
 }
 
 // --- Tenant profile (store settings) ---
 
-export function useTenantProfile() {
-  return useQuery({ queryKey: ["tenant-profile"], queryFn: () => apiFetch<any>("/tenants/me") });
+export function useTenantProfile(enabled = true) {
+  return useQuery({ queryKey: ["tenant-profile"], queryFn: () => apiFetch<any>("/tenants/me"), enabled });
 }
 
 export function useUpdateTenantProfile() {
@@ -687,8 +688,8 @@ export function useDeleteRole() {
 
 // --- Warehouses ---
 
-export function useWarehouses() {
-  return useQuery({ queryKey: ["warehouses"], queryFn: () => apiFetch<any[]>("/warehouses") });
+export function useWarehouses(enabled = true) {
+  return useQuery({ queryKey: ["warehouses"], queryFn: () => apiFetch<any[]>("/warehouses"), enabled });
 }
 
 export function useCreateWarehouse() {
