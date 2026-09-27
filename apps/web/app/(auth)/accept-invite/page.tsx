@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -9,6 +10,18 @@ import { useAcceptInvite } from "@/lib/hooks";
 import { ApiError } from "@/lib/api-client";
 
 export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <main className="flex flex-1 items-center justify-center">
+        <p className="text-sm text-zinc-500">Loading…</p>
+      </main>
+    }>
+      <AcceptInviteContent />
+    </Suspense>
+  );
+}
+
+function AcceptInviteContent() {
   const token = useSearchParams().get("token") ?? "";
   const acceptInvite = useAcceptInvite();
   const { register, handleSubmit, formState: { errors } } = useForm<AcceptInviteDto>({
