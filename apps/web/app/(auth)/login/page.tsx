@@ -25,6 +25,10 @@ export default function LoginPage() {
     formState: { errors },
   } = useForm<LoginDto>({ resolver: zodResolver(loginSchema) });
 
+  function resolveRedirect(data: any): string {
+    return data.permissions?.includes("platform.super_admin") ? "/admin" : "/dashboard";
+  }
+
   const onSubmit = handleSubmit((dto) => {
     login.mutate(dto, {
       onSuccess: (data: any) => {
@@ -32,7 +36,7 @@ export default function LoginPage() {
           setChallengeToken(data.challengeToken);
         } else {
           setAccessToken(data.tokens.accessToken);
-          router.push("/dashboard");
+          router.push(resolveRedirect(data));
         }
       },
     });
@@ -46,7 +50,7 @@ export default function LoginPage() {
       {
         onSuccess: (data) => {
           setAccessToken(data.tokens.accessToken);
-          router.push("/dashboard");
+          router.push(resolveRedirect(data));
         },
       },
     );
@@ -110,12 +114,11 @@ export default function LoginPage() {
         <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-50">Log in</h1>
 
         <form onSubmit={onSubmit} className="space-y-4" noValidate>
-          {/* Phase 1's dashboard has no subdomain routing yet (see proxy.ts's
-              comment) — in production this is reached AT the tenant's own
-              subdomain and resolved from the Host header automatically,
-              so a person never sees this field. */}
           <label className="block space-y-1">
-            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Store subdomain</span>
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Store subdomain
+              <span className="ml-1 font-normal text-zinc-400">(leave blank for Platform Admin)</span>
+            </span>
             <input {...register("subdomain")} className="input" placeholder="your-store" />
             {errors.subdomain && <span className="block text-xs text-red-600">{errors.subdomain.message}</span>}
           </label>

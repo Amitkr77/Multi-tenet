@@ -11,6 +11,8 @@ import { ProductsController } from './products.controller';
 import { StorefrontProductsController } from './storefront-products.controller';
 import { StorefrontCategoriesController } from './storefront-categories.controller';
 import { StorefrontInfoController } from './storefront-info.controller';
+import { StorefrontBrandsController } from './storefront-brands.controller';
+import { StorefrontQaController } from './storefront-qa.controller';
 import { ProductsService } from './products.service';
 
 @Module({
@@ -23,6 +25,8 @@ import { ProductsService } from './products.service';
     StorefrontProductsController,
     StorefrontCategoriesController,
     StorefrontInfoController,
+    StorefrontBrandsController,
+    StorefrontQaController,
   ],
   providers: [
     CategoriesService,
@@ -30,6 +34,6 @@ import { ProductsService } from './products.service';
     AttributesService,
     ProductsService,
   ],
-  exports: [ProductsService],
+  exports: [ProductsService, BrandsService],
 })
 export class ProductsModule {}

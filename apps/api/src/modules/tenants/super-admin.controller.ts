@@ -1,8 +1,10 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -28,6 +30,10 @@ import { TenantsService } from './tenants.service';
  * *current* tenant context, which for the Super Admin is null — see
  * permissions.ts's `super_admin` role). No separate "is this Super Admin"
  * mechanism needed.
+ *
+ * ORDERING NOTE: Fixed-path routes (/platform-stats, /platform-activity) must
+ * be registered before parameterized routes (/:id) so NestJS doesn't swallow
+ * them as if they were tenant IDs.
  */
 @ApiTags('Tenants')
 @Controller('tenants')
@@ -37,12 +43,26 @@ export class SuperAdminController {
 
   @ZodQuery(paginationQuerySchema)
   @Get()
-  list(@Query(new ZodValidationPipe(paginationQuerySchema)) query: any) {
+  list(@Query(new ZodValidationPipe(paginationQuerySchema)) query: any): Promise<any> {
     return this.tenantsService.listAll(query.page, query.limit);
   }
 
+  /** Aggregate counts + MRR — no :id param so must come before /:id. */
+  @Get('platform-stats')
+  platformStats() {
+    return this.tenantsService.platformStats();
+  }
+
+  /** Recent audit log entries across all tenants — must come before /:id. */
+  @Get('platform-activity')
+  platformActivity(
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ): Promise<any[]> {
+    return this.tenantsService.platformActivity(limit);
+  }
+
   @Get(':id')
-  getOne(@Param('id') id: string) {
+  getOne(@Param('id') id: string): Promise<any> {
     return this.tenantsService.getById(id);
   }
 
@@ -54,6 +74,16 @@ export class SuperAdminController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.tenantsService.updateStatus(id, dto, user.userId);
+  }
+
+  /** Directly assign a plan to a tenant (bypasses Stripe — admin action only). */
+  @Patch(':id/plan')
+  assignPlan(
+    @Param('id') id: string,
+    @Body('planId') planId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<any> {
+    return this.tenantsService.assignPlan(id, planId, user.userId);
   }
 
   @Get(':id/audit-logs')

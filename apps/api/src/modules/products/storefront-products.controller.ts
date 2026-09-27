@@ -26,14 +26,22 @@ export class StorefrontProductsController {
   list(
     @CurrentTenantId() tenantId: string | null,
     @Query('categoryId') categoryId?: string,
+    @Query('brandId') brandId?: string,
     @Query('search') search?: string,
+    @Query('sort') sort?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     this.requireTenant(tenantId);
     return this.productsService.listPublic(tenantId!, {
       categoryId,
+      brandId,
       search,
+      sort,
+      minPrice: minPrice ? parseFloat(minPrice) : undefined,
+      maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });

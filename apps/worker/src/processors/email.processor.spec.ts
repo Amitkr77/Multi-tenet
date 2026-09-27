@@ -26,7 +26,7 @@ describe("EmailProcessor", () => {
     expect(sendMail).toHaveBeenCalledTimes(1);
     const call = sendMail.mock.calls[0][0];
     expect(call.to).toBe("a@b.com");
-    expect(call.subject).toBe("Verify your email");
+    expect(call.subject).toBe("Verify your email address");
     expect(call.html).toContain("http://x/verify?token=1");
   });
 
@@ -69,7 +69,7 @@ describe("EmailProcessor", () => {
     } as any);
 
     const call = sendMail.mock.calls[0][0];
-    expect(call.subject).toBe("Your order at Acme Inc is confirmed");
+    expect(call.subject).toBe("Order confirmed — Acme Inc");
     expect(call.html).toContain("$42.50");
     expect(call.html).toContain("http://x/orders/order-1");
   });
@@ -86,7 +86,7 @@ describe("EmailProcessor", () => {
     } as any);
 
     const call = sendMail.mock.calls[0][0];
-    expect(call.subject).toBe("Payment failed for Acme Inc");
+    expect(call.subject).toBe("Action required: payment failed for Acme Inc");
     expect(call.html).toContain("http://x/invoice/in_1");
     expect(call.html).toContain("2026-08-12");
   });

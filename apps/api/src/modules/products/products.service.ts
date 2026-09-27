@@ -126,22 +126,39 @@ export class ProductsService {
     tenantId: string,
     filters: {
       categoryId?: string;
+      brandId?: string;
       search?: string;
+      sort?: string;
+      minPrice?: number;
+      maxPrice?: number;
       page?: number;
       limit?: number;
     },
   ): Promise<any> {
+    let orderBy: any = { createdAt: 'desc' };
+    switch (filters.sort) {
+      case 'price_asc': orderBy = { basePrice: 'asc' }; break;
+      case 'price_desc': orderBy = { basePrice: 'desc' }; break;
+      case 'name_asc': orderBy = { name: 'asc' }; break;
+    }
+
+    const priceFilter: any = {};
+    if (filters.minPrice !== undefined) priceFilter.gte = filters.minPrice;
+    if (filters.maxPrice !== undefined) priceFilter.lte = filters.maxPrice;
+
     return this.prisma.client.product.findMany({
       where: {
         tenantId,
         status: 'published',
         categoryId: filters.categoryId,
+        brandId: filters.brandId,
         name: filters.search
           ? { contains: filters.search, mode: 'insensitive' }
           : undefined,
+        basePrice: Object.keys(priceFilter).length ? priceFilter : undefined,
       },
       include: PRODUCT_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      orderBy,
       ...resolvePagination(filters.page, filters.limit),
     });
   }

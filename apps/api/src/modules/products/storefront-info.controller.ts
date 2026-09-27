@@ -26,7 +26,7 @@ export class StorefrontInfoController {
     }
     const tenant = await this.prisma.base.tenant.findUnique({
       where: { id: tenantId },
-      select: { name: true, currency: true },
+      select: { name: true, currency: true, logoUrl: true, bannerUrl: true, primaryColor: true, tagline: true },
     });
     if (!tenant) {
       throw new NotFoundException({
@@ -34,6 +34,13 @@ export class StorefrontInfoController {
         message: 'No store found.',
       });
     }
-    return { name: tenant.name, currency: tenant.currency.toUpperCase() };
+    return {
+      name: tenant.name,
+      currency: tenant.currency.toUpperCase(),
+      logoUrl: tenant.logoUrl,
+      bannerUrl: tenant.bannerUrl,
+      primaryColor: tenant.primaryColor,
+      tagline: tenant.tagline,
+    };
   }
 }

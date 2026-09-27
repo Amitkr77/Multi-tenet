@@ -18,7 +18,7 @@ export class TenantsController {
 
   @Get('me')
   @RequirePermissions('settings.view')
-  getMe(@CurrentTenantId() tenantId: string) {
+  getMe(@CurrentTenantId() tenantId: string): Promise<any> {
     return this.tenantsService.getById(tenantId);
   }
 

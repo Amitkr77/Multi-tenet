@@ -50,6 +50,11 @@ model Tenant {
   // (FR-AU-03/NFR-CP-02), mirroring exactly how pastDueSince drives
   // DunningProcessor's suspension grace period.
   offboardedAt  DateTime?    @map("offboarded_at")
+  // Storefront branding — Phase 7 storefront enhancements
+  logoUrl       String?      @map("logo_url")
+  bannerUrl     String?      @map("banner_url")
+  primaryColor  String?      @map("primary_color")
+  tagline       String?
   createdAt     DateTime     @default(now()) @map("created_at")
   updatedAt     DateTime     @updatedAt @map("updated_at")
 
@@ -77,6 +82,8 @@ model Tenant {
   usageCounters UsageCounter[]
   planOverrides TenantPlanOverride[]
   invoices      Invoice[]
+  wishlistItems WishlistItem[]
+  productQuestions ProductQuestion[]
 
   customDomains        CustomDomain[]
   webhookSubscriptions WebhookSubscription[]
@@ -360,6 +367,8 @@ model Product {
   variants        ProductVariant[]
   attributeValues ProductAttributeValue[]
   reviews         Review[]
+  wishlistItems   WishlistItem[]
+  questions       ProductQuestion[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -522,6 +531,8 @@ model Customer {
   orders            Order[]
   couponRedemptions CouponRedemption[]
   reviews           Review[]
+  wishlistItems     WishlistItem[]
+  questions         ProductQuestion[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -1262,4 +1273,53 @@ model ApiKey {
 
   @@index([tenantId])
   @@map("api_keys")
+}
+
+// ---------------------------------------------------------------------------
+// Storefront Enhancements — Wishlist + Q&A
+// ---------------------------------------------------------------------------
+
+// RLS-protected (tenant_id policy). @@unique prevents duplicate saves;
+// upsert in the API makes adding idempotent.
+model WishlistItem {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId String   @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([customerId, productId])
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("wishlist_items")
+}
+
+enum QuestionStatus {
+  pending
+  answered
+  hidden
+}
+
+// Public questions on a product page; answers are added by tenant staff.
+// RLS-protected (tenant_id policy).
+model ProductQuestion {
+  id        String         @id @default(uuid())
+  tenantId  String         @map("tenant_id")
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId String         @map("product_id")
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId String?       @map("customer_id")
+  customer  Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  question  String
+  answer    String?
+  status    QuestionStatus @default(pending)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([productId])
+  @@map("product_questions")
 }

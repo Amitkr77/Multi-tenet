@@ -147,10 +147,11 @@ export function useTransferStock() {
 
 // --- Orders ---
 
-export function useOrders(status?: string) {
+export function useOrders(status?: string, enabled = true) {
   return useQuery({
     queryKey: ["orders", status],
     queryFn: () => apiFetch<any[]>(`/orders${status ? `?status=${status}` : ""}`),
+    enabled,
   });
 }
 
@@ -395,6 +396,34 @@ export function useCreatePlanOverride() {
     mutationFn: ({ tenantId, dto }: { tenantId: string; dto: any }) =>
       apiFetch<any>(`/tenants/${tenantId}/plan-override`, { method: "POST", body: dto }),
     onSuccess: (_data, vars) => queryClient.invalidateQueries({ queryKey: ["plan-overrides", vars.tenantId] }),
+  });
+}
+
+export function useAssignPlan() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ tenantId, planId }: { tenantId: string; planId: string }) =>
+      apiFetch<any>(`/tenants/${tenantId}/plan`, { method: "PATCH", body: { planId } }),
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["admin-tenants", vars.tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["admin-tenants"] });
+    },
+  });
+}
+
+export function usePlatformStats() {
+  return useQuery({
+    queryKey: ["platform-stats"],
+    queryFn: () => apiFetch<any>("/tenants/platform-stats"),
+    staleTime: 60_000,
+  });
+}
+
+export function usePlatformActivity(limit = 50) {
+  return useQuery({
+    queryKey: ["platform-activity", limit],
+    queryFn: () => apiFetch<any[]>(`/tenants/platform-activity?limit=${limit}`),
+    staleTime: 30_000,
   });
 }
 

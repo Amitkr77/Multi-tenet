@@ -31,6 +31,7 @@ import {
   type AuthenticatedCustomer,
 } from '../../common/decorators/current-customer.decorator';
 import { CustomerJwtGuard } from '../../common/guards/customer-jwt.guard';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CustomerAuthService } from './customer-auth.service';
 import { CustomerAddressesService } from './customer-addresses.service';
 
@@ -76,6 +77,7 @@ export class CustomerAuthController {
   constructor(
     private readonly customerAuthService: CustomerAuthService,
     private readonly addressesService: CustomerAddressesService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Public()
@@ -216,5 +218,75 @@ export class CustomerAuthController {
     @Param('addressId') addressId: string,
   ) {
     await this.addressesService.remove(customer.customerId, addressId);
+  }
+
+  // --- Wishlist ---
+
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Get('me/wishlist')
+  getWishlist(@CurrentCustomer() customer: AuthenticatedCustomer): Promise<any[]> {
+    return this.prisma.runScoped(customer.tenantId, (tx) =>
+      tx.wishlistItem.findMany({
+        where: { customerId: customer.customerId },
+        include: {
+          product: {
+            include: {
+              images: { orderBy: { position: 'asc' }, take: 1 },
+              variants: { include: { inventory: true }, take: 1 },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+  }
+
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Post('me/wishlist')
+  addToWishlist(
+    @CurrentCustomer() customer: AuthenticatedCustomer,
+    @Body('productId') productId: string,
+  ): Promise<any> {
+    return this.prisma.runScoped(customer.tenantId, (tx) =>
+      tx.wishlistItem.upsert({
+        where: { customerId_productId: { customerId: customer.customerId, productId } },
+        create: { tenantId: customer.tenantId, customerId: customer.customerId, productId },
+        update: {},
+      }),
+    );
+  }
+
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Delete('me/wishlist/:productId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeFromWishlist(
+    @CurrentCustomer() customer: AuthenticatedCustomer,
+    @Param('productId') productId: string,
+  ) {
+    await this.prisma.runScoped(customer.tenantId, (tx) =>
+      tx.wishlistItem.deleteMany({
+        where: { customerId: customer.customerId, productId },
+      }),
+    );
+  }
+
+  // --- Coupon history ---
+
+  @Public()
+  @UseGuards(CustomerJwtGuard)
+  @Get('me/coupons')
+  myCoupons(@CurrentCustomer() customer: AuthenticatedCustomer): Promise<any[]> {
+    return this.prisma.runScoped(customer.tenantId, (tx) =>
+      tx.couponRedemption.findMany({
+        where: { customerId: customer.customerId },
+        include: {
+          coupon: { select: { code: true, type: true, value: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
   }
 }

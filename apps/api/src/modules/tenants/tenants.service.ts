@@ -26,9 +26,13 @@ export class TenantsService {
   ) {}
 
   /** `tenants` has no RLS policy (it IS the tenant) — base client is correct here. */
-  async getById(tenantId: string) {
+  async getById(tenantId: string): Promise<any> {
     const tenant = await this.prisma.base.tenant.findUnique({
       where: { id: tenantId },
+      include: {
+        plan: { include: { limits: true } },
+        _count: { select: { users: true } },
+      },
     });
     if (!tenant)
       throw new NotFoundException({
@@ -47,12 +51,16 @@ export class TenantsService {
 
   // --- Super Admin ---
 
-  async listAll(page: number, limit: number) {
+  async listAll(page: number, limit: number): Promise<any> {
     const [items, total] = await Promise.all([
       this.prisma.base.tenant.findMany({
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        include: {
+          plan: { select: { id: true, name: true, price: true, billingInterval: true } },
+          _count: { select: { users: true } },
+        },
       }),
       this.prisma.base.tenant.count(),
     ]);
@@ -196,6 +204,103 @@ export class TenantsService {
       tx.tenantPlanOverride.findMany({
         where: { tenantId },
         orderBy: { createdAt: 'desc' },
+      }),
+    );
+  }
+
+  /** Assign a plan directly to a tenant (super-admin action). */
+  async assignPlan(
+    tenantId: string,
+    planId: string,
+    actorUserId: string,
+  ): Promise<any> {
+    const tenant = await this.getById(tenantId);
+    const plan = await this.prisma.base.plan.findUnique({ where: { id: planId } });
+    if (!plan) throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Plan not found.' });
+
+    const updated = await this.prisma.base.tenant.update({
+      where: { id: tenantId },
+      data: { currentPlanId: planId },
+      include: { plan: { include: { limits: true } }, _count: { select: { users: true } } },
+    });
+
+    await this.auditLog.log({
+      tenantId,
+      actorUserId,
+      action: 'tenant.plan_assigned',
+      metadata: { fromPlanId: tenant.currentPlanId, toPlanId: planId, planName: plan.name },
+    });
+
+    return updated;
+  }
+
+  /** Platform-wide aggregate stats for the admin overview. */
+  async platformStats() {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const [
+      byStatus,
+      newThisMonth,
+      newLastMonth,
+      planCounts,
+    ] = await Promise.all([
+      this.prisma.base.tenant.groupBy({ by: ['status'], _count: { id: true } }),
+      this.prisma.base.tenant.count({ where: { createdAt: { gte: startOfMonth } } }),
+      this.prisma.base.tenant.count({
+        where: { createdAt: { gte: startOfLastMonth, lt: startOfMonth } },
+      }),
+      this.prisma.base.tenant.groupBy({
+        by: ['currentPlanId'],
+        _count: { id: true },
+        where: { status: 'active' },
+      }),
+    ]);
+
+    // MRR: active tenants × their plan price
+    const planIds = planCounts
+      .map((p) => p.currentPlanId)
+      .filter(Boolean) as string[];
+    const plans = planIds.length
+      ? await this.prisma.base.plan.findMany({ where: { id: { in: planIds } } })
+      : [];
+
+    const mrr = planCounts.reduce((sum, row) => {
+      if (!row.currentPlanId) return sum;
+      const plan = plans.find((p) => p.id === row.currentPlanId);
+      if (!plan) return sum;
+      const monthly = plan.billingInterval === 'year'
+        ? Number(plan.price) / 12
+        : Number(plan.price);
+      return sum + monthly * row._count.id;
+    }, 0);
+
+    const statusMap: Record<string, number> = {};
+    for (const row of byStatus) statusMap[row.status] = row._count.id;
+
+    return {
+      totalTenants: Object.values(statusMap).reduce((a, b) => a + b, 0),
+      byStatus: statusMap,
+      newThisMonth,
+      newLastMonth,
+      mrr: Math.round(mrr * 100) / 100,
+    };
+  }
+
+  /**
+   * Recent platform-wide audit log entries across all tenants.
+   * `runScoped(null)` sets `app.tenant_id = NULL` which, per the audit_logs
+   * SELECT policy, allows the Super Admin context to see all rows (including
+   * cross-tenant ones). The null sentinel is recognised by the policy in the
+   * same way the platform.super_admin role is exempted from tenant isolation
+   * everywhere else.
+   */
+  async platformActivity(limit = 50): Promise<any[]> {
+    return this.prisma.runScoped(null, (tx) =>
+      tx.auditLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: limit,
       }),
     );
   }

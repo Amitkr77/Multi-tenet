@@ -17,6 +17,14 @@ export class BrandsService {
     });
   }
 
+  listPublic(tenantId: string): Promise<any[]> {
+    return this.prisma.client.brand.findMany({
+      where: { tenantId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, slug: true },
+    });
+  }
+
   async create(tenantId: string, dto: CreateBrandDto): Promise<any> {
     const existing = await this.prisma.client.brand.findUnique({
       where: { tenantId_slug: { tenantId, slug: dto.slug } },

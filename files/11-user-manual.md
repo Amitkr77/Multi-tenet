@@ -75,15 +75,55 @@ This system has **two completely different mechanisms** depending on which part 
 
 ## 4. Testing as the Platform Super Admin
 
-**Log in:** go to http://localhost:3000/login, email `superadmin@platform.test`, password `Password123!`. You'll land on `/dashboard` — navigate to `/admin/tenants` (there's no nav link generated for it automatically; type the URL).
+### Logging in
 
-**What to test:**
-- `/admin/tenants` — list every tenant on the platform (you'll see Alpha and Beta, plus any you register yourself in §5-6).
-- `/admin/tenants/[id]` — open a tenant's detail page:
-  - Change its status (`active` → `suspended` → `offboarded`) and confirm: a suspended tenant's storefront (`/alpha`) starts refusing requests; an offboarded tenant auto-triggers a data export (visible from that tenant owner's `/dashboard/settings/compliance` page) and, if you backdate `offboardedAt` far enough, gets permanently deleted by the retention job.
-  - Grant a plan override (a temporary limit bump) and confirm it shows up for that tenant.
-  - Impersonate the tenant (issues you a token as if you were its owner — useful for support-style debugging).
-- `/admin/plans` — create/edit/archive subscription plans (Free Trial and Pro already exist); confirm archived plans can no longer be assigned to new tenants but existing subscribers are unaffected.
+1. Go to **http://localhost:3000/login**
+2. **Leave the "Store subdomain" field blank** — this is the key step that identifies you as the platform admin rather than a tenant user.
+3. Enter email `superadmin@platform.test` and password `Password123!`
+4. Click **Log in** — you are automatically redirected to **`/admin`** (the platform console). No manual URL needed.
+
+> **Tip:** The login page shows `(leave blank for Platform Admin)` next to the subdomain label as a reminder.
+
+### Navigation
+
+The platform console has a dedicated sidebar (separate from the tenant dashboard) with four sections:
+
+| Page | URL | Purpose |
+|---|---|---|
+| Overview | `/admin` | Platform-wide stats: total tenants by status, recent sign-ups, plans summary |
+| Tenants | `/admin/tenants` | Paginated list with search and status filter |
+| Plans | `/admin/plans` | Create / edit / archive subscription plans |
+| Settings | `/admin/settings` | Your account info, service URLs, seeded tenant quick-links |
+
+### What to test
+
+**Overview (`/admin`)**
+- Confirm tenant counts by status are accurate.
+- The "Recent sign-ups" table links directly to each tenant's detail page.
+
+**Tenants (`/admin/tenants`)**
+- Use the **search box** to filter by name or subdomain.
+- Use the **status filter pills** (All / trial / active / past_due / suspended / offboarded) to narrow the list.
+- Click **Manage →** to open a tenant's detail page.
+
+**Tenant detail (`/admin/tenants/[id]`)**
+The page is split into three tabs:
+
+- **Overview tab** — change the tenant's status (requires a reason field). Changing to `suspended` restricts that tenant's storefront; `offboarded` triggers a data export and eventually permanent deletion.
+- **Plan Overrides tab** — grant a temporary limit bump (e.g., raise `product_count` to 500 for an enterprise trial). Override has an expiry date. Existing overrides are listed above the create form.
+- **Audit Log tab** — every status change and override grant is recorded here with a timestamp.
+
+Use the **← Back to Tenants** button (top of the detail page) to return to the list without using the browser back button.
+
+**Plans (`/admin/plans`)**
+- Click **Edit** on any active plan to open an edit modal — change name, price, billing interval, or per-metric limits.
+- Click **+ New plan** (top-right) to expand the create form inline.
+- Click **Archive** to retire a plan (existing subscribers are unaffected; the plan just can no longer be assigned to new tenants).
+
+**Settings (`/admin/settings`)**
+- View your Super Admin account details (email, 2FA status).
+- Quick-links to every local service URL.
+- Seeded tenant list with direct links to their storefront and dashboard login.
 
 ---
 
